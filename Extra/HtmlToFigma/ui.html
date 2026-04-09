@@ -1,0 +1,344 @@
+<!doctype html>
+<html lang="en">
+	<head>
+		<meta charset="UTF-8" />
+		<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+
+		<!-- Standalone Libraries to enable fully local parsing without a backend -->
+		<script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+		<script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+		<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+		<script src="https://cdn.tailwindcss.com"></script>
+
+		<style>
+			body {
+				font-family: "Inter", sans-serif;
+				margin: 0;
+				background: #f5f5f5;
+			}
+			.split-pane {
+				display: flex;
+				height: 100vh;
+			}
+			.editor-pane {
+				flex: 1;
+				display: flex;
+				flex-direction: column;
+				background: #fff;
+				border-right: 1px solid #e5e5e5;
+			}
+			.preview-pane {
+				flex: 1;
+				display: flex;
+				flex-direction: column;
+				background: #f9f9f9;
+				position: relative;
+			}
+			textarea {
+				flex: 1;
+				padding: 16px;
+				font-family: monospace;
+				font-size: 13px;
+				border: none;
+				resize: none;
+				outline: none;
+				background: #282a36;
+				color: #f8f8f2;
+			}
+			.header {
+				padding: 12px 16px;
+				border-bottom: 1px solid #e5e5e5;
+				display: flex;
+				justify-content: space-between;
+				align-items: center;
+				background: #fff;
+			}
+			.btn {
+				background: #0d99ff;
+				color: white;
+				border: none;
+				padding: 8px 16px;
+				border-radius: 6px;
+				cursor: pointer;
+				font-weight: 500;
+				font-size: 13px;
+			}
+			.btn:hover {
+				background: #0a80d8;
+			}
+			#render-container {
+				transform: scale(0.6);
+				transform-origin: top left;
+				width: 166%;
+				height: 166%;
+				overflow: auto;
+				pointer-events: none;
+			}
+			#hidden-render {
+				position: absolute;
+				opacity: 0;
+				pointer-events: none;
+				z-index: -100;
+			}
+		</style>
+	</head>
+	<body>
+		<div class="split-pane">
+			<div class="editor-pane">
+				<div class="header">
+					<select
+						id="code-type"
+						style="padding: 6px; border-radius: 4px; border: 1px solid #ccc"
+					>
+						<option value="react">React Component (JSX/Tailwind)</option>
+						<option value="html">Raw HTML</option>
+					</select>
+					<button class="btn" onclick="processCode()">Generate in Figma</button>
+				</div>
+				<textarea
+					id="code-input"
+					placeholder="Paste your React/Tailwind or HTML code here..."
+				></textarea>
+			</div>
+			<div class="preview-pane">
+				<div class="header" style="background: transparent; border: none">
+					<span style="font-size: 12px; font-weight: 600; color: #666"
+						>Live DOM Preview</span
+					>
+				</div>
+				<div
+					style="flex: 1; overflow: hidden; position: relative; padding: 16px"
+				>
+					<div id="render-container"></div>
+				</div>
+			</div>
+		</div>
+
+		<script>
+			// --- 1. DOM to Figma JSON Parser ---
+
+			function parseColor(str) {
+				if (!str || str === "rgba(0, 0, 0, 0)" || str === "transparent")
+					return [];
+				const match = str.match(
+					/rgba?\((\d+),\s*(\d+),\s*(\d+)(?:,\s*([\d.]+))?\)/,
+				);
+				if (match) {
+					return [
+						{
+							type: "SOLID",
+							color: {
+								r: parseInt(match[1]) / 255,
+								g: parseInt(match[2]) / 255,
+								b: parseInt(match[3]) / 255,
+							},
+							opacity: match[4] !== undefined ? parseFloat(match[4]) : 1,
+						},
+					];
+				}
+				return [];
+			}
+
+			function parseBoxShadow(str) {
+				if (!str || str === "none") return [];
+				// A very simplified box shadow parser targeting tailwind standard shadows
+				const effects = [];
+				const regex = /rgba?\(.*?\)|#[0-9a-fA-F]+/g;
+				let colorStr = str.match(regex)?.[0] || "rgba(0,0,0,0.1)";
+
+				effects.push({
+					type: "DROP_SHADOW",
+					color: parseColor(colorStr)[0]?.color || { r: 0, g: 0, b: 0 },
+					offset: { x: 0, y: 4 },
+					radius: 4,
+					visible: true,
+					blendMode: "NORMAL",
+				});
+				return effects;
+			}
+
+			function parseDOMNode(el, parentRect = { left: 0, top: 0 }) {
+				if (el.nodeType === Node.TEXT_NODE) {
+					const text = el.textContent.trim();
+					if (!text) return null;
+					return { type: "TEXT", text: text };
+				}
+				if (el.nodeType !== Node.ELEMENT_NODE) return null;
+
+				const style = window.getComputedStyle(el);
+				const rect = el.getBoundingClientRect();
+				if (rect.width === 0 || rect.height === 0 || style.display === "none")
+					return null;
+
+				const isTextNode = Array.from(el.childNodes).every(
+					(n) => n.nodeType === Node.TEXT_NODE,
+				);
+
+				const figmaNode = {
+					type: isTextNode ? "TEXT" : "FRAME",
+					tagName: el.tagName.toLowerCase(),
+					width: rect.width,
+					height: rect.height,
+					x: rect.left - parentRect.left,
+					y: rect.top - parentRect.top,
+					fills: parseColor(style.backgroundColor),
+					strokes: parseColor(style.borderColor),
+					strokeWeight:
+						style.borderWidth && style.borderWidth !== "0px"
+							? parseFloat(style.borderWidth)
+							: 0,
+					cornerRadius: parseFloat(style.borderRadius) || 0,
+					effects: parseBoxShadow(style.boxShadow),
+					layoutMode: "NONE",
+					children: [],
+				};
+
+				// Handle Text styling
+				if (figmaNode.type === "TEXT") {
+					figmaNode.text = el.innerText || el.textContent;
+					figmaNode.fontSize = parseFloat(style.fontSize) || 16;
+					figmaNode.fontWeight = parseFloat(style.fontWeight) || 400;
+					figmaNode.fills = parseColor(style.color);
+					// Clean up transparent text frames
+					if (figmaNode.fills.length === 0)
+						figmaNode.fills = [{ type: "SOLID", color: { r: 0, g: 0, b: 0 } }];
+				}
+
+				// Handle Flexbox / Auto Layout
+				if (style.display === "flex" && figmaNode.type === "FRAME") {
+					figmaNode.layoutMode = style.flexDirection.includes("column")
+						? "VERTICAL"
+						: "HORIZONTAL";
+					figmaNode.paddingTop = parseFloat(style.paddingTop) || 0;
+					figmaNode.paddingBottom = parseFloat(style.paddingBottom) || 0;
+					figmaNode.paddingLeft = parseFloat(style.paddingLeft) || 0;
+					figmaNode.paddingRight = parseFloat(style.paddingRight) || 0;
+
+					// Gap calculation
+					const gapMatch = style.gap.match(/([\d.]+)px/);
+					if (gapMatch) figmaNode.itemSpacing = parseFloat(gapMatch[1]);
+
+					const justify = style.justifyContent;
+					if (justify === "center") figmaNode.primaryAxisAlignItems = "CENTER";
+					else if (justify === "flex-end")
+						figmaNode.primaryAxisAlignItems = "MAX";
+					else if (justify === "space-between")
+						figmaNode.primaryAxisAlignItems = "SPACE_BETWEEN";
+					else figmaNode.primaryAxisAlignItems = "MIN";
+
+					const align = style.alignItems;
+					if (align === "center") figmaNode.counterAxisAlignItems = "CENTER";
+					else if (align === "flex-end")
+						figmaNode.counterAxisAlignItems = "MAX";
+					else figmaNode.counterAxisAlignItems = "MIN";
+				}
+
+				// Process children
+				for (let child of el.childNodes) {
+					const childNode = parseDOMNode(child, rect);
+					if (childNode) {
+						if (figmaNode.type === "TEXT" && childNode.type === "TEXT") {
+							figmaNode.text += " " + childNode.text; // Basic text merging
+						} else {
+							figmaNode.type = "FRAME"; // Upgrade to frame if it has complex children
+							figmaNode.children.push(childNode);
+						}
+					}
+				}
+
+				return figmaNode;
+			}
+
+			// --- 2. Code Execution & Figma Trigger ---
+
+			async function processCode() {
+				const code = document.getElementById("code-input").value;
+				const type = document.getElementById("code-type").value;
+				const container = document.getElementById("render-container");
+				container.innerHTML = "";
+
+				if (type === "react") {
+					// Mock icons specifically for your codebase to prevent crashes
+					const mockIcons = [
+						"Undo2",
+						"Redo2",
+						"Pipette",
+						"Check",
+						"Minus",
+						"Plus",
+						"Palette",
+						"Brush",
+						"Sparkles",
+						"Layers",
+						"Cherry",
+						"Flower2",
+						"X",
+						"ChevronRight",
+						"Droplet",
+						"PaintBucket",
+						"ImageIcon",
+						"History",
+						"Bookmark",
+						"SparkleIcon",
+						"MousePointer2",
+						"Move",
+						"Maximize2",
+						"RotateCw",
+					];
+
+					let cleanedCode = code.replace(/import.*?from.*/g, "");
+					cleanedCode = cleanedCode.replace(/export default/g, "");
+
+					const boilerplate = `
+          const React = window.React;
+          const useState = React.useState;
+          const useEffect = React.useEffect;
+          
+          // Fallback UI for generic Lucide Icons
+          const IconFallback = () => React.createElement('div', { className: 'w-6 h-6 bg-gray-300 rounded-full flex items-center justify-center text-[10px] font-bold text-white' }, 'ic');
+          ${mockIcons.map((i) => `const ${i} = IconFallback;`).join("\n")}
+          
+          ${cleanedCode}
+          
+          const root = ReactDOM.createRoot(document.getElementById('render-container'));
+          root.render(React.createElement(App));
+        `;
+
+					try {
+						const transpiled = Babel.transform(boilerplate, {
+							presets: ["react"],
+						}).code;
+						eval(transpiled);
+					} catch (err) {
+						alert("React parsing error: " + err.message);
+						return;
+					}
+				} else {
+					// Raw HTML
+					container.innerHTML = code;
+				}
+
+				// Wait 100ms for React to mount and Tailwind to apply classes
+				setTimeout(() => {
+					if (!container.firstElementChild) {
+						alert("No visual elements generated.");
+						return;
+					}
+
+					// Parse the computed DOM tree
+					const figmaData = parseDOMNode(container.firstElementChild);
+
+					// Send JSON payload to Figma Plugin Core
+					parent.postMessage(
+						{ pluginMessage: { type: "create-figma-nodes", data: figmaData } },
+						"*",
+					);
+				}, 300);
+			}
+
+			// Add default code for quick testing
+			document.getElementById("code-input").value =
+				`// Paste your React or HTML here!\n<div class="flex flex-col items-center justify-center p-8 bg-pink-100 rounded-3xl shadow-xl w-[400px] h-[300px] gap-4">\n   <h1 class="text-3xl font-bold text-pink-600">Bakery Base</h1>\n   <div class="flex gap-4">\n      <button class="bg-white px-6 py-3 rounded-full font-bold text-pink-500 shadow-sm border-2 border-pink-200">Cake</button>\n      <button class="bg-white px-6 py-3 rounded-full font-bold text-pink-500 shadow-sm border-2 border-pink-200">Cookie</button>\n   </div>\n</div>`;
+		</script>
+	</body>
+</html>

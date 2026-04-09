@@ -1,0 +1,10 @@
+{
+    "name": "Figma to JSON",
+    "id": "1623082824938629959",
+    "api": "1.0.0",
+    "main": "code.js",
+    "ui": "ui.html",
+    "editorType": [
+        "figma"
+    ]
+}

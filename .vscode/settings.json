@@ -1,0 +1,4 @@
+{
+	"robloxLsp.diagnostics.disable": ["undefined-global"],
+	"stylua.targetReleaseVersion": "latest"
+}

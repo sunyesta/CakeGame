@@ -1,0 +1,16 @@
+{
+    "name": "Code to Figma",
+    "id": "code-to-figma-local",
+    "api": "1.0.0",
+    "main": "code.js",
+    "ui": "ui.html",
+    "editorType": [
+        "figma"
+    ],
+    "networkAccess": {
+        "allowedDomains": [
+            "*"
+        ],
+        "reasoning": "Requires access to external CDNs to fetch standalone libraries like React, ReactDOM, Babel, and Tailwind CSS for DOM rendering and AST parsing."
+    }
+}
