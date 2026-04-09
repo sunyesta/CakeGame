@@ -75,7 +75,7 @@ function ModelEditorController.Start(configName)
 
 	Props.State:Set(nil)
 	Props.RunningStatePromise = nil
-	Props.ActiveGizmo:Set(Enums.Gizmos.Move)
+	Props.ActiveGizmo:Set(Enums.Gizmos.Rotate)
 	Props.SelectedMaterial:Set(nil)
 	Props.IsDiscarding:Set(false)
 	Props.LockCamera:Set(false)
@@ -352,6 +352,7 @@ function ModelEditorController.GetDataWithoutSaving()
 	return ModelEditorUtils.Save(Props.Config.BuildPlatform, Props.Instances.ModelsFolder)
 end
 
+-- make save pull from last undo step
 function ModelEditorController.Save()
 	local saveData = ModelEditorController.GetDataWithoutSaving()
 	Props.Config.Funcs.SaveData(saveData)

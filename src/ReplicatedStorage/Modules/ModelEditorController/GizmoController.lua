@@ -17,6 +17,9 @@ local ModelEditorUtils = require(script.Parent.ModelEditorUtils)
 local MouseIcons = require(script.Parent.MouseIcons)
 local RotateTool = require(script.Parent.Tools.RotateTool)
 local Handles = require(script.Parent.Modules.Handles)
+local HistoryManager = require(script.Parent.HistoryManager)
+local ArcHandles = require(script.Parent.Modules.ArcHandles)
+
 -- TODO removeOninteractfinished, just change mode to idle manually
 local mouseTouch = MouseTouch.new()
 
@@ -142,7 +145,6 @@ function GizmoController._SetupTransformGizmo(gizmoTrove, model, onInteractFinis
 	end))
 end
 
--- TODO check directions
 ---------------------------------------------------------------------
 -- MOVE GIZMO
 ---------------------------------------------------------------------
@@ -152,11 +154,9 @@ function GizmoController._SetupMoveGizmo(gizmoTrove, model, onInteractFinished)
 	handles:SetAdornee(model)
 
 	local mouseDownTrove = gizmoTrove:Extend()
-	local symmetricalParts = ModelEditorUtils.GetSymmetryClones(model)
 
 	gizmoTrove:Add(handles.MouseButton1Down:Connect(function(clickedNormal)
-		-- FIX 1: Cache the initial pivot of the model the moment we click.
-		-- We will apply our total `delta` to this starting position, not the current position.
+		-- Cache the initial pivot of the model the moment we click.
 		local startPivot = model:GetPivot()
 
 		local originalWeld = ModelEditorUtils.GetWeldedPart(model)
@@ -178,21 +178,129 @@ function GizmoController._SetupMoveGizmo(gizmoTrove, model, onInteractFinished)
 		end))
 
 		mouseDownTrove:Add(handles.MouseButton1Up:Connect(function()
-			-- This will cleanly disconnect MouseDrag, the anchor reset function, and PrepareForMoving
 			mouseDownTrove:Clean()
-			ModelEditorUtils.PlaceOn(model, originalWeld)
-			ModelEditorUtils.UpdateSymmetricalParts(model, originalWeld, symmetricalParts)
+			if originalWeld then
+				ModelEditorUtils.PlaceOn(model, originalWeld)
+			end
+			ModelEditorUtils.UpdateSymmetricalParts(model, originalWeld)
+			HistoryManager.AddUndoStep()
 		end))
 	end))
 end
+
+-- TODO make pivot of handles around the pivot of the object, not the center
 ---------------------------------------------------------------------
 -- ROTATION GIZMO
 ---------------------------------------------------------------------
-function GizmoController._SetupRotationGizmo(gizmoTrove, model, onInteractFinished) end
+function GizmoController._SetupRotationGizmo(gizmoTrove, model, onInteractFinished)
+	local handles = gizmoTrove:Add(ArcHandles.new(ReplicatedStorage.Assets.ModelEditorController.RotationRing))
+
+	-- Using Local space makes pulling "out" and "in" from the model align logically.
+	handles.HandleSpace:Set(Handles.HandleSpaces.Local)
+	handles:SetAdornee(model)
+
+	local mouseDownTrove = gizmoTrove:Extend()
+
+	gizmoTrove:Add(handles.MouseButton1Down:Connect(function(axis)
+		print(axis)
+		-- 1. Cache the starting CFrame and weld
+		local startPivot = model:GetPivot()
+		local originalWeld = ModelEditorUtils.GetWeldedPart(model)
+
+		-- 2. Prepare model (unwelding temporarily prevents constraint fighting)
+		mouseDownTrove:Add(ModelEditorUtils.PrepareForMoving(model))
+
+		-- 3. Anchor the model temporarily during the drag to prevent physics glitches
+		model.PrimaryPart.Anchored = true
+		mouseDownTrove:Add(function()
+			model.PrimaryPart.Anchored = false
+		end)
+
+		-- Based on your ArcHandles module, MouseDrag fires with (axis: Enum.Axis, accumulatedAngle: number)
+		mouseDownTrove:Add(handles.MouseDrag:Connect(function(dragAxis, accumulatedAngle)
+			-- 4. Create a Rotation CFrame around the dragged axis
+			local rotationCFrame = CFrame.identity
+
+			if dragAxis == Enum.Axis.X then
+				rotationCFrame = CFrame.Angles(accumulatedAngle, 0, 0)
+			elseif dragAxis == Enum.Axis.Y then
+				-- FIX: Negate the accumulatedAngle for the Y axis so the rotation follows the mouse direction correctly!
+				rotationCFrame = CFrame.Angles(0, -accumulatedAngle, 0)
+			elseif dragAxis == Enum.Axis.Z then
+				-- FIX: Negate the accumulatedAngle for the Z axis as well
+				rotationCFrame = CFrame.Angles(0, 0, -accumulatedAngle)
+			end
+
+			-- 5. Apply the rotation mathematically.
+			-- Because we are in Local Space, we multiply our startPivot by the local rotationCFrame.
+			model:PivotTo(startPivot * rotationCFrame)
+
+			-- 5b. Update symmetrical clones to match the newly calculated Pivot.
+			ModelEditorUtils.UpdateSymmetricalParts(model, originalWeld)
+		end))
+
+		mouseDownTrove:Add(handles.MouseButton1Up:Connect(function()
+			-- 6. Clean up connections, re-anchor, and re-weld
+			mouseDownTrove:Clean()
+			if originalWeld then
+				ModelEditorUtils.PlaceOn(model, originalWeld)
+			end
+			ModelEditorUtils.UpdateSymmetricalParts(model, originalWeld)
+			HistoryManager.AddUndoStep()
+		end))
+	end))
+end
 
 ---------------------------------------------------------------------
 -- SCALE GIZMO
 ---------------------------------------------------------------------
-function GizmoController._SetupScaleGizmo(gizmoTrove, model, onInteractFinished) end
+function GizmoController._SetupScaleGizmo(gizmoTrove, model, onInteractFinished)
+	local handles = gizmoTrove:Add(Handles.new(ReplicatedStorage.Assets.ModelEditorController.ScaleHandle))
+
+	-- Using Local space makes pulling "out" and "in" from the model align logically.
+	handles.HandleSpace:Set(Handles.HandleSpaces.Global)
+	handles:SetAdornee(model)
+
+	local mouseDownTrove = gizmoTrove:Extend()
+
+	gizmoTrove:Add(handles.MouseButton1Down:Connect(function(clickedNormal)
+		-- 1. Cache the starting scale and weld
+		local startScale = model:GetScale()
+		local originalWeld = ModelEditorUtils.GetWeldedPart(model)
+
+		-- 2. Prepare model (unwelding temporarily prevents constraint fighting)
+		mouseDownTrove:Add(ModelEditorUtils.PrepareForMoving(model))
+
+		-- 3. Anchor the model temporarily during the drag to prevent physics glitches
+		model.PrimaryPart.Anchored = true
+		mouseDownTrove:Add(function()
+			model.PrimaryPart.Anchored = false
+		end)
+
+		mouseDownTrove:Add(handles.MouseDrag:Connect(function(dragNormal, delta)
+			-- 4. Calculate new scale
+			-- delta is the distance dragged in studs.
+			-- SCALE_SENSITIVITY controls how fast the object scales based on mouse movement.
+			local SCALE_SENSITIVITY = 1
+			local newScale = math.max(0.01, startScale + (delta * SCALE_SENSITIVITY))
+
+			model:ScaleTo(newScale)
+
+			-- 5. Update symmetrical clones.
+			-- ModelEditorUtils naturally applies the base model's GetScale() to its clones inside this function!
+			ModelEditorUtils.UpdateSymmetricalParts(model, originalWeld)
+		end))
+
+		mouseDownTrove:Add(handles.MouseButton1Up:Connect(function()
+			-- 6. Clean up connections, re-anchor, and re-weld
+			mouseDownTrove:Clean()
+			if originalWeld then
+				ModelEditorUtils.PlaceOn(model, originalWeld)
+			end
+			ModelEditorUtils.UpdateSymmetricalParts(model, originalWeld)
+			HistoryManager.AddUndoStep()
+		end))
+	end))
+end
 
 return GizmoController

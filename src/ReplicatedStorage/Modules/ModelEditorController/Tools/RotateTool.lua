@@ -81,7 +81,7 @@ function RotateTool.Activate(model, axis)
 					Vector3Utils.GetRotationBetweenVectors(initialVector, currentVector, rotatePlaneNormal)
 
 				-- Symmetrical clones naturally trace the curve when the relative offset changes!
-				ModelEditorUtils.UpdateSymmetricalParts(model)
+				ModelEditorUtils.UpdateSymmetricalParts(model, originalWeldedPart)
 				return CFrame.new(initialPivot.Position) * relativeRotation * initialPivot.Rotation
 			end
 
@@ -95,7 +95,7 @@ function RotateTool.Activate(model, axis)
 			geometricDrag:StopDrag()
 
 			ModelEditorUtils.PlaceOn(model, originalWeldedPart)
-			ModelEditorUtils.UpdateSymmetricalParts(model)
+			ModelEditorUtils.UpdateSymmetricalParts(model, originalWeldedPart)
 
 			toolTrove:Clean()
 			resolve(Enums.MoveStatuses.Moved)
@@ -180,7 +180,7 @@ function RotateTool.ActivateArcball(model, arcballRadius, mouseOffset)
 
 		geometricDrag:SetDragStyle(function()
 			-- Symmetrical clone updates
-			ModelEditorUtils.UpdateSymmetricalParts(model)
+			ModelEditorUtils.UpdateSymmetricalParts(model, originalWeldedPart)
 
 			local currentRay = Props.MouseTouchGui:GetRay()
 			local currentVector = getVectorOnSphere(currentRay)
@@ -211,7 +211,7 @@ function RotateTool.ActivateArcball(model, arcballRadius, mouseOffset)
 			geometricDrag:StopDrag()
 
 			ModelEditorUtils.PlaceOn(model, originalWeldedPart)
-			ModelEditorUtils.UpdateSymmetricalParts(model)
+			ModelEditorUtils.UpdateSymmetricalParts(model, originalWeldedPart)
 
 			toolTrove:Clean()
 			resolve(Enums.MoveStatuses.Moved)

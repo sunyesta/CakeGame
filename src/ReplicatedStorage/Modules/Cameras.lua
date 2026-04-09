@@ -132,11 +132,11 @@ function CakeCamera()
 		local boundingBox = GetBoundingBox(ModelEditorModels)
 		local yPos = math.round(boundingBox.Y)
 		cakeCamera.Follow = Vector3.new(CakeBuildPlatform.Position.X, yPos, CakeBuildPlatform.Position.Z)
-		PointVisualizer.new(cakeCamera.Follow)
+		-- PointVisualizer.new(cakeCamera.Follow)
 	end)
 
 	ModelEditorController.FreezeCamera:Observe(function(freezeCamera)
-		print(freezeCamera)
+		-- print(freezeCamera)
 		if freezeCamera then
 			cakeCamera.Body.RotationControlEnabled = false
 			cakeCamera.Body.ZoomControlEnabled = false
