@@ -193,11 +193,39 @@ function GizmoController._SetupTransformGizmo(gizmoTrove, model, onInteractFinis
 			scrollActionTrove:Clean()
 			scrollActionTrove = nil
 		end
-		Props.FreezeCamera:Set(false)
+		-- Note: We no longer manually unfreeze the camera here. RenderStepped handles it!
 	end
 
 	-- Ensures the thread doesn't continue running if the gizmo is suddenly cleaned up
 	scrollTrove:Add(endScrollSession)
+
+	-- NEW LOGIC: Preemptively lock the camera using RenderStepped
+	scrollTrove:Add(RunService.RenderStepped:Connect(function()
+		local hoveringPart = scaleClickDetector:GetBasePart(true)
+		local isHoveringOrScaling = false
+
+		if UserInputService.PreferredInput == Enum.PreferredInput.Touch then
+			if hoveringPart then
+				isHoveringOrScaling = true
+			else
+				isHoveringOrScaling = #MultiTouch.TouchPositions:Get() > 0
+			end
+		else
+			isHoveringOrScaling = if hoveringPart then true else false
+		end
+
+		-- Keep the camera locked if a scaling session is already active
+		if scrollActionTrove ~= nil then
+			isHoveringOrScaling = true
+		end
+
+		-- Do not lock the camera if the Right Mouse Button is being held down
+		if UserInputService:IsMouseButtonPressed(Enum.UserInputType.MouseButton2) then
+			isHoveringOrScaling = false
+		end
+
+		Props.FreezeCamera:Set(isHoveringOrScaling)
+	end))
 
 	scrollTrove:Add(mouseTouch.Scrolled:Connect(function(delta)
 		local hoveringPart = scaleClickDetector:GetBasePart(true)
@@ -207,20 +235,26 @@ function GizmoController._SetupTransformGizmo(gizmoTrove, model, onInteractFinis
 			if hoveringPart then
 				isScaling = true
 			else
-				isScaling = isScaling and #MultiTouch.TouchPositions:Get() > 0
+				isScaling = #MultiTouch.TouchPositions:Get() > 0
 			end
 		else
 			isScaling = if hoveringPart then true else false
 		end
 
-		-- NEW LOGIC: If a scaling session is already active, ignore mouse hover state and continue scaling!
+		-- If a scaling session is already active, continue scaling!
 		if scrollActionTrove ~= nil then
 			isScaling = true
 		end
 
-		if isScaling then
-			Props.FreezeCamera:Set(true)
+		-- Do not start or continue scaling if the Right Mouse Button is being held down
+		if UserInputService:IsMouseButtonPressed(Enum.UserInputType.MouseButton2) then
+			isScaling = false
+			if scrollActionTrove then
+				endScrollSession()
+			end
+		end
 
+		if isScaling then
 			-- 1. Initialize the scaling session if it hasn't started yet
 			if not scrollActionTrove then
 				scrollActionTrove = scrollTrove:Extend()
@@ -292,14 +326,10 @@ function GizmoController._SetupTransformGizmo(gizmoTrove, model, onInteractFinis
 
 			-- 4. Start a new timeout thread. If the user stops scrolling for 1 second, finish up.
 			scrollTimeoutThread = task.delay(1, endScrollSession)
-		else
-			-- Ensure camera is unfrozen if we simply scroll away from the model
-			if not scrollActionTrove then
-				Props.FreezeCamera:Set(false)
-			end
 		end
 	end))
 
+	-- Ensure camera is definitively unfrozen if the gizmo is deselected entirely
 	gizmoTrove:Add(function()
 		Props.FreezeCamera:Set(false)
 	end)
