@@ -28,7 +28,6 @@ local Assert = require(ReplicatedStorage.NonWallyPackages.Assert)
 local TableUtil = require(ReplicatedStorage.Packages.TableUtil)
 local GetAssetByName = require(ReplicatedStorage.Common.Modules.GetAssetByName)
 local SelectionTool = require(script.Tools.SelectionTool)
-local WeldChainManager = require(script.WeldChainManager)
 
 local Player = Players.LocalPlayer
 
@@ -75,7 +74,7 @@ function ModelEditorController.Start(configName)
 
 	Props.State:Set(nil)
 	Props.RunningStatePromise = nil
-	Props.ActiveGizmo:Set(Enums.Gizmos.Rotate)
+	Props.ActiveGizmo:Set(Enums.Gizmos.Transform)
 	Props.SelectedMaterial:Set(nil)
 	Props.IsDiscarding:Set(false)
 	Props.LockCamera:Set(false)
@@ -437,6 +436,8 @@ ModelEditorController.WorkspaceChanged = Props.WorkspaceChanged
 ModelEditorController.RadialSymmetryCount = Props.RadialSymmetryCount
 ModelEditorController.FreezeCamera = Props.FreezeCamera
 ModelEditorController.CursorIcons = MouseIcons
+ModelEditorController.Enums = Enums
+ModelEditorController.ActiveGizmo = Props.ActiveGizmo
 
 Props.Instances = ModelEditorController.Instances
 

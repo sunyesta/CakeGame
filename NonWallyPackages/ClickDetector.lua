@@ -167,6 +167,40 @@ function ClickDetector:ToggleCursorVisibility(toggle)
 	CursorGui.Enabled = toggle
 end
 
+function ClickDetector:CreatePropForHoveringObserveOverlapping()
+	local trove = self._Trove:Extend()
+	local isHovering = Property.new(false)
+	isHovering._trove:Add(trove)
+
+	local lastMouseDownPart = nil
+	trove:Add(MouseTouch.LeftDown:Connect(function(pos)
+		-- Calculate the position taking into account any overrides
+		local effectivePos = ClickDetector.OverrideCursorPosition or pos
+
+		local clickDetector, result = self:GetBasePart(true, effectivePos) --TODO fix
+		if clickDetector then
+			clickDetector.LeftDown:Fire(result.Instance, result)
+			lastMouseDownPart = result.Instance
+		end
+	end))
+
+	trove:Add(MouseTouch.LeftUp:Connect(function(pos)
+		-- Calculate the position taking into account any overrides
+		local effectivePos = ClickDetector.OverrideCursorPosition or pos
+
+		local clickDetector, result = self:GetBasePart(true, effectivePos)
+		if clickDetector then
+			clickDetector.LeftUp:Fire(result.Instance)
+			if lastMouseDownPart and result.Instance == lastMouseDownPart then
+				clickDetector.LeftClick:Fire(result.Instance, result)
+			end
+			lastMouseDownPart = nil
+		end
+	end))
+
+	return isHovering
+end
+
 -- Helper to detect if the mouse is over an interactive 2D GUI
 local function IsHoveringOverGuiButton(mousePos)
 	local guisAtPosition = PlayerGui:GetGuiObjectsAtPosition(mousePos.X, mousePos.Y - GuiService:GetGuiInset().Y)

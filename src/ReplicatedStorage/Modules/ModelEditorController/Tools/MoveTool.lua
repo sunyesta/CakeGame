@@ -1,5 +1,6 @@
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
+
 local Promise = require(ReplicatedStorage.Packages.Promise)
 local Assert = require(ReplicatedStorage.NonWallyPackages.Assert)
 local GeometricDrag = require(ReplicatedStorage.NonWallyPackages.GeometricDrag)
@@ -58,12 +59,18 @@ function MoveTool.Activate(model, mouseOffset, recalculatePivot)
 		local originalCFrame = model:GetPivot()
 		local originalWeldedPart = ModelEditorUtils.GetWeldedPart(model)
 
+		-- NEW: Track the last known distance. Initialize it based on the camera and original model position.
+		local lastDistance = (originalCFrame.Position - Props.CurrentCamera.CFrame.Position).Magnitude
+
 		local DiscardModelHighlight = toolTrove:Add(ModelEditorUtils.CreateDiscardHighlight())
 
 		local function snapmove()
 			local mousePos = mouseOffset + Props.MouseTouchGui:GetPosition()
 			local result = Props.MouseTouchGui:Raycast(raycastParams, nil, mousePos)
 			local cframe
+
+			-- We retrieve the mouseRay unconditionally so we can use its Origin and Direction for both cases
+			local mouseRay = Props.Mouse:GetRay()
 
 			-- If we hit something that is NOT a surface, ignore it by adding it to the filter and raycasting again
 			while result and not Props.Config.Funcs.IsSurface(result.Instance) do
@@ -72,11 +79,14 @@ function MoveTool.Activate(model, mouseOffset, recalculatePivot)
 			end
 
 			if result then
+				-- NEW: Update our last known distance based on the valid raycast hit
+				lastDistance = (result.Position - mouseRay.Origin).Magnitude
+
 				cframe = CFrame.lookAlong(result.Position, result.Normal, Vector3.xAxis)
 					* CFrame.Angles(math.rad(-90), 0, 0)
 			else
-				local mouseRay = Props.Mouse:GetRay()
-				cframe = CFrame.new(mouseRay.Origin + mouseRay.Direction * 10)
+				-- NEW: Use `lastDistance` instead of the hardcoded `DEFAULT_DISTANCE`
+				cframe = CFrame.new(mouseRay.Origin + mouseRay.Direction * lastDistance)
 			end
 
 			return cframe, result
@@ -101,12 +111,13 @@ function MoveTool.Activate(model, mouseOffset, recalculatePivot)
 
 			if isDiscarding then
 				DiscardModelHighlight.Parent = model
+				-- We leave the base model parenting here because the ViewportFrame renders it for the UI
 				model.Parent = Props.Instances.ViewPortFrame.WorldModel
 				Props.IsDiscarding:Set(true)
 
-				-- CLEAR CLONES: Hide them while hovering over the discard UI
+				-- CLEAR CLONES: Move them super far away while hovering over the discard UI
 				for _, clone in symmetryClones do
-					clone.Parent = nil
+					clone:PivotTo(CFrame.new(0, 1e6, 0))
 				end
 
 				local mouseRay = Props.Mouse:GetRay()
@@ -122,19 +133,15 @@ function MoveTool.Activate(model, mouseOffset, recalculatePivot)
 				Props.IsDiscarding:Set(false)
 
 				if not result then
-					-- INVALID SURFACE: Hide clones if we drag off the valid build area
+					-- INVALID SURFACE: Move clones super far away if we drag off the valid build area
 					model.Parent = Props.Instances.ModelsFolder
 
 					for _, clone in symmetryClones do
-						clone.Parent = nil
+						clone:PivotTo(CFrame.new(0, 1e6, 0))
 					end
 				else
-					-- VALID PLACEMENT: Restore their visibility and calculate positions
+					-- VALID PLACEMENT: Restore their visibility by pulling them back from the distance
 					model.Parent = Props.Instances.ModelsFolder
-
-					for _, clone in symmetryClones do
-						clone.Parent = Props.Instances.ModelsFolder
-					end
 
 					-- Pass result.Instance as the targetPart, and false so we don't weld while dragging!
 					ModelEditorUtils.UpdateSymmetricalParts(model, result.Instance)

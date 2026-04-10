@@ -162,7 +162,7 @@ if __name__ == "__main__":
     # 3. Define blacklist patterns (glob style)
     # Common examples: "*.log", ".git", "node_modules", "__pycache__"
     black_list = [
-        r"src/ReplicatedStorage/Modules/ModelEditorController/Modules"
+        r"src/ReplicatedStorage/Modules/ModelEditorController/Modules",
         r"C:\Users\Mary\Documents\roblox game dev\CakeGame\src\ReplicatedStorage\Controllers",
         r"src\ReplicatedStorage\VSCodeStudioPlugins\SmoothieMoveTools2\Modules",
     ]

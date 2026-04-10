@@ -26,15 +26,6 @@ local CONFIG = {
 
 local mouseTouch = MouseTouch.new()
 
--- mouseTouch.LeftDown:Connect() -- check if click
-
-function SwitchGizmo(buttonName)
-	if buttonName == "Move" then
-	elseif buttonName == "Rotate" then
-	elseif buttonName == "Transform" then
-	end
-end
-
 function IncrementRadialSymmetry(amount: number)
 	ModelEditorController.RadialSymmetryCount:Update(function(radialSymmetryCount)
 		return Vector3.new(0, radialSymmetryCount.Y + amount, 0)
@@ -64,7 +55,7 @@ local CakeDecoratorGui = Component.new({
 CakeDecoratorGui.IsOpen = Property.new(false)
 CakeDecoratorGui.Singleton = true
 
--- Constants for our Active Tab Visuals
+-- Constants for our Active Tab & Button Visuals
 local TWEEN_INFO = TweenInfo.new(0.2, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
 local ACTIVE_BG_COLOR = Color3.new(0.996078, 0.968627, 0.909804)
 local ACTIVE_TEXT_COLOR = Color3.fromRGB(219, 39, 119)
@@ -119,6 +110,36 @@ function CakeDecoratorGui:Construct()
 	self.SymmetryCountScrubber = self.SymmetryPickerPanel:WaitForChild("SymmetryCountScrubber") :: GuiButton
 	self.SymmetryButton = self.SideBar:WaitForChild("SymmetryButton") :: GuiButton
 
+	-- Setup Gizmo References
+	self.GizmoPickerPanel = self.SideBar:WaitForChild("GizmoPickerPanel")
+	self.GizmoButton = self.SideBar:WaitForChild("GizmoButton") :: GuiButton
+
+	self.GizmoButtons = {
+		Transform = self.GizmoPickerPanel:WaitForChild("Transform") :: ImageButton,
+		Move = self.GizmoPickerPanel:WaitForChild("Move") :: ImageButton,
+		Rotate = self.GizmoPickerPanel:WaitForChild("Rotate") :: ImageButton,
+		Scale = self.GizmoPickerPanel:WaitForChild("Scale") :: ImageButton,
+	}
+
+	-- Cache default color states for Gizmo buttons based on Transform (selected) and Move (unselected)
+	local transformText = self.GizmoButtons.Transform:FindFirstChild("TextLabel") :: TextLabel
+	local moveText = self.GizmoButtons.Move:FindFirstChild("TextLabel") :: TextLabel
+	local transformImg = self.GizmoButtons.Transform:FindFirstChild("ImageLabel") :: ImageLabel
+	local moveImg = self.GizmoButtons.Move:FindFirstChild("ImageLabel") :: ImageLabel
+
+	self.GizmoColors = {
+		Selected = {
+			Background = self.GizmoButtons.Transform.BackgroundColor3,
+			Text = transformText and transformText.TextColor3 or ACTIVE_TEXT_COLOR,
+			Image = transformImg and transformImg.ImageColor3 or ACTIVE_TEXT_COLOR,
+		},
+		Unselected = {
+			Background = self.GizmoButtons.Move.BackgroundColor3,
+			Text = moveText and moveText.TextColor3 or Color3.new(0, 0, 0),
+			Image = moveImg and moveImg.ImageColor3 or Color3.new(0, 0, 0),
+		},
+	}
+
 	-- Apply hover growth effects to UI buttons
 	ApplyHoverGrowth(self._Trove, self.UndoButton, 1.1)
 	ApplyHoverGrowth(self._Trove, self.RedoButton, 1.1)
@@ -127,6 +148,12 @@ function CakeDecoratorGui:Construct()
 	ApplyHoverGrowth(self._Trove, self.SymmetryLessBtn, 1.1)
 	ApplyHoverGrowth(self._Trove, self.SymmetryMoreBtn, 1.1)
 	ApplyHoverGrowth(self._Trove, self.SymmetryCountScrubber, 1.05)
+
+	-- Apply hover to Gizmo elements
+	ApplyHoverGrowth(self._Trove, self.GizmoButton, 1.05)
+	for _, btn in pairs(self.GizmoButtons) do
+		ApplyHoverGrowth(self._Trove, btn, 1.1)
+	end
 
 	-- Add View References
 	self.Views = self.MainPanel:WaitForChild("Views")
@@ -290,6 +317,39 @@ function CakeDecoratorGui:Construct()
 		end
 	end)
 
+	-- Setup Gizmo Controls
+	self.GizmoActive = false
+	self.GizmoPickerPanel.Visible = false
+
+	self._Trove:Connect(self.GizmoButton.MouseButton1Click, function()
+		self:SetGizmoActive(not self.GizmoActive)
+	end)
+
+	-- Wire up all gizmo mode buttons to trigger our mode selection function
+	for modeName, btn in pairs(self.GizmoButtons) do
+		self._Trove:Connect(btn.MouseButton1Click, function()
+			self:SetGizmoMode(modeName)
+		end)
+	end
+
+	-- Setup Observer to keep Gizmo visual state perfectly synchronized
+	if ModelEditorController.ActiveGizmo.Observe then
+		self._Trove:Add(ModelEditorController.ActiveGizmo:Observe(function(activeGizmo)
+			if activeGizmo == ModelEditorController.Enums.Gizmos.Transform then
+				self:UpdateGizmoVisuals("Transform")
+			elseif activeGizmo == ModelEditorController.Enums.Gizmos.Move then
+				self:UpdateGizmoVisuals("Move")
+			elseif activeGizmo == ModelEditorController.Enums.Gizmos.Rotate then
+				self:UpdateGizmoVisuals("Rotate")
+			elseif activeGizmo == ModelEditorController.Enums.Gizmos.Scale then
+				self:UpdateGizmoVisuals("Scale")
+			end
+		end))
+	else
+		-- Fallback in case Observe is missing
+		self:UpdateGizmoVisuals("Transform")
+	end
+
 	if ModelEditorController.RadialSymmetryCount.Observe then
 		self._Trove:Add(ModelEditorController.RadialSymmetryCount:Observe(function(count)
 			self.SymmetryCountScrubber.Text = tostring(count.Y)
@@ -369,10 +429,70 @@ function CakeDecoratorGui:Construct()
 	self:SetActiveTab("Color")
 end
 
--- Handles toggling the dynamic visual state of the Symmetry Panel
+-- Handles toggling the dynamic visual state of the Symmetry Panel and exclusivity
 function CakeDecoratorGui:SetSymmetryActive(isActive: boolean)
+	if self.SymmetryActive == isActive then
+		return
+	end
 	self.SymmetryActive = isActive
 	self.SymmetryPickerPanel.Visible = isActive
+
+	-- Ensure Gizmo Panel is closed if we are opening the Symmetry Panel
+	if isActive and self.GizmoActive then
+		self:SetGizmoActive(false)
+	end
+end
+
+-- Handles toggling the dynamic visual state of the Gizmo Panel and exclusivity
+function CakeDecoratorGui:SetGizmoActive(isActive: boolean)
+	if self.GizmoActive == isActive then
+		return
+	end
+	self.GizmoActive = isActive
+	self.GizmoPickerPanel.Visible = isActive
+
+	-- Ensure Symmetry Panel is closed if we are opening the Gizmo Panel
+	if isActive and self.SymmetryActive then
+		self:SetSymmetryActive(false)
+	end
+end
+
+-- Updates the underlying controller tool state
+function CakeDecoratorGui:SetGizmoMode(modeName: string)
+	if modeName == "Transform" then
+		ModelEditorController.ActiveGizmo:Set(ModelEditorController.Enums.Gizmos.Transform)
+	elseif modeName == "Move" then
+		ModelEditorController.ActiveGizmo:Set(ModelEditorController.Enums.Gizmos.Move)
+	elseif modeName == "Rotate" then
+		ModelEditorController.ActiveGizmo:Set(ModelEditorController.Enums.Gizmos.Rotate)
+	elseif modeName == "Scale" then
+		ModelEditorController.ActiveGizmo:Set(ModelEditorController.Enums.Gizmos.Scale)
+	end
+end
+
+-- Updates the visual state of the buttons inside the panel (Fired by Observer)
+function CakeDecoratorGui:UpdateGizmoVisuals(modeName: string)
+	self.CurrentGizmoMode = modeName
+
+	for name, button in pairs(self.GizmoButtons) do
+		local isSelected = (name == modeName)
+		local textLabel = button:FindFirstChild("TextLabel") :: TextLabel
+		local imageLabel = button:FindFirstChild("ImageLabel") :: ImageLabel
+
+		local targetBg = isSelected and self.GizmoColors.Selected.Background or self.GizmoColors.Unselected.Background
+		local targetText = isSelected and self.GizmoColors.Selected.Text or self.GizmoColors.Unselected.Text
+		local targetImg = isSelected and self.GizmoColors.Selected.Image or self.GizmoColors.Unselected.Image
+
+		button.BackgroundColor3 = targetBg
+
+		if textLabel then
+			textLabel.TextColor3 = targetText
+		end
+
+		if imageLabel then
+			imageLabel.ImageColor3 = targetImg
+		end
+	end
 end
 
 function CakeDecoratorGui:SetupAssetTab(tabData: table)

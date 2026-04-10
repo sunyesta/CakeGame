@@ -14,6 +14,9 @@ local ClickDetectorClass: any = require(NonWallyPackages:WaitForChild("ClickDete
 local MouseTouchClass: any = require(NonWallyPackages:WaitForChild("MouseTouch"))
 local Property = require(NonWallyPackages:WaitForChild("Property"))
 
+-- Default size is now explicitly in studs
+local DEFAULT_HANDLE_SIZE_STUDS = 5
+
 local HandleSpaces = {
 	Local = "Local",
 	Global = "Global", -- WARNING: Global doesn't work right now
@@ -25,6 +28,8 @@ export type ArcHandlesType = {
 	Axes: Axes,
 	Color: Color3,
 	HandleSpace: any,
+	Size: any,
+	PivotOffset: any,
 
 	MouseButton1Down: any,
 	MouseButton1Up: any,
@@ -76,8 +81,10 @@ function ArcHandles.new(handleRingTemplate: BasePart): ArcHandlesType
 	self.Axes = Axes.new(Enum.Axis.X, Enum.Axis.Y, Enum.Axis.Z)
 	self.Color = Color3.fromRGB(13, 105, 172) -- Standard Studio Blue
 
-	-- Our Handles Space Property (defaults to Local)
+	-- Our Handles Space Properties
 	self.HandleSpace = self._Trove:Add(Property.new(HandleSpaces.Local))
+	self.Size = self._Trove:Add(Property.new(DEFAULT_HANDLE_SIZE_STUDS))
+	self.PivotOffset = self._Trove:Add(Property.new(CFrame.new()))
 
 	-- Events
 	self.MouseButton1Down = self._Trove:Add(Signal.new())
@@ -123,13 +130,14 @@ function ArcHandles.new(handleRingTemplate: BasePart): ArcHandlesType
 	return self
 end
 
--- Helper method to retrieve the correct central CFrame based on Local/Global space
+-- Helper method to retrieve the correct central CFrame based on Local/Global space and PivotOffset
 function ArcHandles:_getWorkingCFrame(): CFrame
 	if not self.Adornee then
 		return CFrame.new()
 	end
 
-	local localCf = GetAdorneeCFrame(self.Adornee)
+	-- INTEGRATION: Apply PivotOffset to the base Adornee CFrame
+	local localCf = GetAdorneeCFrame(self.Adornee) * self.PivotOffset:Get()
 
 	-- If space is Global, we base it entirely on the world axes
 	if self.HandleSpace:Get() == HandleSpaces.Global then
@@ -148,13 +156,13 @@ function ArcHandles:_getWorkingCFrame(): CFrame
 		return globalCf
 	end
 
-	-- If Local, just return the exact Adornee CFrame
+	-- If Local, just return the exact Adornee CFrame combined with the PivotOffset
 	return localCf
 end
 
--- Re-renders the graphical parts whenever a property changes
+-- Re-renders the graphical parts whenever a major property changes
 function ArcHandles:_render()
-	self._adornmentsTrove:Clean() -- Safely destroy old parts and connections
+	self._adornmentsTrove:Clean() -- Safely destroy old parts, connections, and observers
 	table.clear(self._activeHandles)
 	self._hoveredAxis = nil
 
@@ -168,9 +176,8 @@ function ArcHandles:_render()
 			continue
 		end
 
-		-- Clone the ring template (Make sure your template faces forward / LookVector is its normal)
+		-- Clone the ring template
 		local handlePart = self._handleTemplate:Clone()
-		local isYAxis = axis == Enum.Axis.Y
 
 		handlePart.Name = axis.Name
 		handlePart.Color = self.Color
@@ -184,6 +191,20 @@ function ArcHandles:_render()
 		self._activeHandles[axis] = handlePart
 		self._adornmentsTrove:Add(handlePart)
 	end
+
+	-- INTEGRATION: Observe Size as absolute studs to scale parts dynamically
+	self._adornmentsTrove:Add(self.Size:Observe(function(newSizeInStuds: number)
+		-- Determine the template's base maximum size in studs (usually the diameter of the ring)
+		local templateSize = self._handleTemplate.Size
+		local templateBaseSize = math.max(templateSize.X, templateSize.Y, templateSize.Z)
+
+		-- Calculate the exact multiplier required to reach the target size in studs
+		local scaleFactor = newSizeInStuds / templateBaseSize
+
+		for _, part in pairs(self._activeHandles) do
+			part.Size = templateSize * scaleFactor
+		end
+	end))
 
 	-- Bind continuous positioning and hover state checks
 	self._adornmentsTrove:Connect(RunService.RenderStepped, function()
@@ -210,7 +231,6 @@ function ArcHandles:_updatePositionsAndHover()
 
 		-- Orient the ring based on its axis. We apply a local rotation so the
 		-- template's LookVector (normal) aligns with the correct axis of 'cf'.
-		-- This preserves the roll (spin) of the CFrame, unlike CFrame.lookAt()
 		if axis == Enum.Axis.X then
 			targetCf = cf * CFrame.Angles(0, math.pi / 2, 0)
 		elseif axis == Enum.Axis.Y then
@@ -376,6 +396,14 @@ end
 
 function ArcHandles:Destroy()
 	self._Trove:Destroy()
+end
+
+function ArcHandles.CalcHandlesSize(model, sizeOffset)
+	local size: Vector3 = model:GetExtentsSize()
+
+	local handleSize = math.max(size.X, size.Y, size.Z) + sizeOffset
+
+	return handleSize
 end
 
 return ArcHandles

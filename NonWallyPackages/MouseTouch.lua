@@ -39,6 +39,7 @@ function MouseTouch.new(allowedTouchTypes)
 	self.Moved = self._Trove:Add(Signal.new())
 	self.LeftDown = self._Trove:Add(Signal.new())
 	self.LeftUp = self._Trove:Add(Signal.new())
+	self.Scrolled = self._Trove:Add(Signal.new())
 
 	-- Setup Input Listeners
 	self:_setupMouseInputs()
@@ -65,6 +66,16 @@ function MouseTouch:_setupMouseInputs()
 
 			self._lastMouseLocation = pos
 			self.Moved:Fire(pos)
+		elseif input.UserInputType == Enum.UserInputType.MouseWheel then
+			-- If Gui is false, we ignore scroll inputs over UI elements like ScrollingFrames
+			if not self._allowedTouchTypes.Gui and processed then
+				return
+			end
+
+			-- For mouse wheel inputs, Roblox stores the scroll delta in the Position.Z property.
+			-- Positive Z is scrolling forward/up, negative Z is scrolling backward/down.
+			local scrollDelta = input.Position.Z
+			self.Scrolled:Fire(scrollDelta)
 		end
 	end))
 
@@ -112,6 +123,10 @@ end
 function MouseTouch:_setupTouchInputs()
 	self._Trove:Add(MultiTouch.TouchPositions:Observe(function(rawTouchPositions)
 		self:_updateFromTouches(rawTouchPositions)
+	end))
+
+	self._Trove:Add(MultiTouch.ZoomGesture:Connect(function(delta)
+		self.Scrolled:Fire(delta)
 	end))
 end
 

@@ -18,8 +18,6 @@ local ModelEditorUtils = {}
 ModelEditorUtils.WELD_NAME = "ModelEditorWeld"
 ModelEditorUtils.NOT_INTERACTIVE_ATTRIBUTE_NAME = "NonInteractive"
 
-local ExtraStorage = Instance.new("Folder")
-
 function ModelEditorUtils.PlaceOn(model, otherPart, cframe)
 	Assert(
 		otherPart and (otherPart.Parent == workspace or workspace:IsAncestorOf(otherPart.Parent)),
@@ -60,7 +58,7 @@ function ModelEditorUtils.BreakWeld(model)
 	weld.Part1 = nil
 end
 
--- NEW: Helper to Break a model's weld, along with all its symmetrical clones
+-- Helper to Break a model's weld, along with all its symmetrical clones
 function ModelEditorUtils.BreakGroupWeld(model)
 	ModelEditorUtils.BreakWeld(model)
 	local groupId = model:GetAttribute("SymmetricalTo")
@@ -130,7 +128,7 @@ function ModelEditorUtils.CanPlace(player, canPlaceFunc, model, cframe, placeOn)
 	return canPlaceFunc(player, model, cframe, placeOn)
 end
 
-function ModelEditorUtils.GetAttachedModels(model)
+function ModelEditorUtils.GetMountedModels(model)
 	local attachedParts = WeldUtils.GetAttachedParts(model.PrimaryPart)
 	local attachedModels = {}
 
@@ -144,25 +142,31 @@ function ModelEditorUtils.GetAttachedModels(model)
 	return TableUtil.Keys(attachedModels)
 end
 
+function ModelEditorUtils._DestroyStack(model)
+	for _, otherModel in ModelEditorUtils.GetMountedModels(model) do
+		otherModel:Destroy()
+	end
+	model:Destroy()
+end
+
 function ModelEditorUtils.DestroyModel(model)
 	if Props.SelectedModel:Get() == model then
 		ModelEditorUtils.SelectModel(nil)
 	end
 
-	-- NEW: Delete everything in the group when a model is discarded or destroyed
+	-- Delete everything in the group when a model is discarded or destroyed
 	local groupId = model:GetAttribute("SymmetricalTo")
 	if groupId then
 		for _, clone in Props.Instances.ModelsFolder:GetChildren() do
 			if clone:GetAttribute("SymmetricalTo") == groupId then
-				clone:Destroy()
+				ModelEditorUtils._DestroyStack(clone)
 			end
 		end
 	end
 
-	-- FIX: Explicitly destroy the base model. If it was dragged to the
 	-- ViewPortFrame for discarding, it won't be in the ModelsFolder loop above!
 	if model and model.Parent then
-		model:Destroy()
+		ModelEditorUtils._DestroyStack(model)
 	end
 end
 
@@ -210,8 +214,7 @@ function ModelEditorUtils.HighlightInvalidModels(trove, models)
 	end))
 end
 
--- NEW: The magic that binds Radial Symmetry to your cursor and edits!
--- Fixed to safely handle parenting, welding, and un-welding dynamically.
+-- The magic that binds Radial Symmetry to your cursor and edits!
 function ModelEditorUtils.UpdateSymmetricalParts(activeModel, activeModelTarget)
 	activeModel = activeModel or Props.SelectedModel:Get()
 	if not activeModel then
@@ -223,8 +226,8 @@ function ModelEditorUtils.UpdateSymmetricalParts(activeModel, activeModelTarget)
 		return
 	end
 
-	-- Safely combine contents of ModelsFolder and ExtraStorage
-	local symmetricalModels = TableUtil.Extend(Props.Instances.ModelsFolder:GetChildren(), ExtraStorage:GetChildren())
+	-- Safely pull contents of ModelsFolder
+	local symmetricalModels = Props.Instances.ModelsFolder:GetChildren()
 	symmetricalModels = TableUtil.Filter(symmetricalModels, function(model)
 		return model.Name == groupId or model:GetAttribute("SymmetricalTo") == groupId
 	end)
@@ -242,22 +245,15 @@ function ModelEditorUtils.UpdateSymmetricalParts(activeModel, activeModelTarget)
 	-- Identify the active target for the base model
 	local targetPart = activeModelTarget or ModelEditorUtils.GetWeldedPart(activeModel)
 
-	-- CONDITION: Parent parts to ExtraStorage & unweld if activeModel lacks an active target
+	-- CONDITION: Move parts super far away & unweld if activeModel lacks an active target
 	if not targetPart then
 		for _, clone in symmetricalModels do
 			if clone ~= activeModel then
-				clone.Parent = ExtraStorage
+				clone:PivotTo(CFrame.new(0, 1e6, 0))
 				ModelEditorUtils.BreakWeld(clone)
 			end
 		end
 		return
-	else
-		-- Ensure clones are actively in the Workspace folder if a target exists
-		for _, clone in symmetricalModels do
-			if clone ~= activeModel then
-				clone.Parent = Props.Instances.ModelsFolder
-			end
-		end
 	end
 
 	activeModel:SetAttribute("SymmetryWeldTarget", targetPart.Name)
@@ -308,7 +304,7 @@ function ModelEditorUtils.UpdateSymmetricalParts(activeModel, activeModelTarget)
 	end
 end
 
--- NEW: Dynamically reconstructs the symmetry group for a selected base model when the count property changes
+-- Dynamically reconstructs the symmetry group for a selected base model when the count property changes
 function ModelEditorUtils.RebuildSymmetryGroup(baseModel, counts)
 	local groupId = baseModel:GetAttribute("SymmetricalTo")
 
@@ -342,9 +338,7 @@ function ModelEditorUtils.RebuildSymmetryGroup(baseModel, counts)
 
 	local targetPart = ModelEditorUtils.GetWeldedPart(baseModel)
 
-	-- FIX: Treat the currently selected base model as the new origin (0, 0, 0)!
-	-- This completely prevents overlapping duplicates and missing slots if the user
-	-- clicks on a model that was previously generated at a different index (like 0, 1, 0)
+	-- Treat the currently selected base model as the new origin (0, 0, 0)!
 	baseModel:SetAttribute("SymmetryData", Vector3.zero)
 
 	-- 2. Generate new clones based on the new count
@@ -400,17 +394,36 @@ function ModelEditorUtils.PrepareForMoving(model)
 	ModelEditorUtils.RequireWeld(model)
 	ModelEditorUtils.BreakGroupWeld(model)
 
-	local attachedModels = ModelEditorUtils.GetAttachedModels(model)
-	for _, attachedModel in attachedModels do
-		attachedModel.Parent = model
+	local mountedModels = ModelEditorUtils.GetMountedModels(model)
+	for _, mountedModel in mountedModels do
+		mountedModel.Parent = model
 	end
 	toolTrove:Add(function()
 		if model.Parent then
-			for _, attachedModel in attachedModels do
-				attachedModel.Parent = Props.Instances.ModelsFolder
+			for _, mountedModel in mountedModels do
+				mountedModel.Parent = Props.Instances.ModelsFolder
 			end
 		end
 	end)
+
+	-- NEW: Gather the main model AND all of its symmetrical clones
+	local modelsToAnchor = { model }
+	for _, clone in ModelEditorUtils.GetSymmetryClones(model) do
+		table.insert(modelsToAnchor, clone)
+	end
+
+	-- Anchor every model temporarily during the drag/scale to prevent physics glitches
+	for _, m in modelsToAnchor do
+		if m.PrimaryPart then
+			m.PrimaryPart.Anchored = true
+			toolTrove:Add(function()
+				-- Ensure model still exists during cleanup before accessing PrimaryPart
+				if m and m.PrimaryPart then
+					m.PrimaryPart.Anchored = false
+				end
+			end)
+		end
+	end
 
 	return toolTrove
 end

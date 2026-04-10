@@ -9,6 +9,7 @@ local Property = require(ReplicatedStorage.NonWallyPackages.Property)
 local Trove = require(ReplicatedStorage.Packages.Trove)
 local GuiUtils = require(ReplicatedStorage.NonWallyPackages.GuiUtils)
 local PlayerModule = require(Players.LocalPlayer.PlayerScripts.PlayerModule)
+local Signal = require(ReplicatedStorage.Packages.Signal)
 
 local Touch = Input.Touch.new()
 
@@ -59,6 +60,8 @@ function MultiTouch.new()
 	self._Trove = Trove.new()
 	self.TouchPositions = Property.new({})
 
+	self.ZoomGesture = Signal.new() -- (delta: number)
+
 	-- Debugging Property
 	self.ViewTouchPositions = false
 
@@ -67,6 +70,9 @@ function MultiTouch.new()
 	self._TouchMap = {} -- [InputObject] = ID
 	self._Visualizers = {} -- [ID] = Frame
 	self._VisualizerGui = nil
+
+	-- Used to track the distance between two fingers for pinch-to-zoom
+	self._LastPinchDistance = nil
 
 	self._Trove:Add(Touch.TouchStarted:Connect(function(touch, processed)
 		local touchType = if processed then TouchType.Gui else TouchType.Unprocessed
@@ -93,6 +99,9 @@ function MultiTouch.new()
 		}
 		self.TouchPositions:Set(touchDatas)
 
+		-- Evaluate Zoom Gesture
+		self:_ProcessZoomGesture()
+
 		-- Visualization
 		if self.ViewTouchPositions then
 			self:_UpdateVisualizer(id, correctedPos)
@@ -109,6 +118,9 @@ function MultiTouch.new()
 				touchDatas[id] = nil
 				self.TouchPositions:Set(touchDatas)
 			end
+
+			-- Evaluate Zoom Gesture
+			self:_ProcessZoomGesture()
 
 			-- Visualization Cleanup
 			self:_RemoveVisualizer(id)
@@ -137,6 +149,9 @@ function MultiTouch.new()
 				}
 				self.TouchPositions:Set(touchDatas)
 
+				-- Evaluate Zoom Gesture
+				self:_ProcessZoomGesture()
+
 				-- Visualization Update
 				if self.ViewTouchPositions then
 					self:_UpdateVisualizer(id, correctedPos)
@@ -149,6 +164,43 @@ function MultiTouch.new()
 	end))
 
 	return self
+end
+
+-- Processes active touches to determine if a pinch-to-zoom is occurring
+function MultiTouch:_ProcessZoomGesture()
+	local touchDatas = self.TouchPositions:Get()
+	local zoomTouches = {}
+
+	-- Filter for Unprocessed touches only (ignores UI and Thumbstick)
+	for _, data in pairs(touchDatas) do
+		if data.TouchType == TouchType.Unprocessed then
+			table.insert(zoomTouches, data)
+		end
+	end
+
+	-- A zoom gesture strictly requires exactly 2 fingers
+	if #zoomTouches == 2 then
+		local pos1 = zoomTouches[1].Position
+		local pos2 = zoomTouches[2].Position
+
+		-- Get distance between the two touches
+		local currentDistance = (pos1 - pos2).Magnitude
+
+		if self._LastPinchDistance then
+			local delta = currentDistance - self._LastPinchDistance
+
+			-- If the distance changed, fire the signal
+			if delta ~= 0 then
+				self.ZoomGesture:Fire(delta)
+			end
+		end
+
+		-- Update the last distance for the next frame calculation
+		self._LastPinchDistance = currentDistance
+	else
+		-- Reset tracking if fingers are lifted or a 3rd finger is added
+		self._LastPinchDistance = nil
+	end
 end
 
 function MultiTouch:_GetVisualizerGui()
