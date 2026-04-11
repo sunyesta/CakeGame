@@ -217,11 +217,31 @@ function Handles:_render()
 		self:_updatePositionsAndHover()
 	end)
 
-	-- 3. Bind interaction clicks via our custom ClickDetector
-	self._adornmentsTrove:Connect(self._clickDetector.LeftDown, function(part: BasePart)
-		-- We only want to start dragging if we are officially hovering over a face
-		if self._hoveredFace then
-			self:_onMouseDown(self._hoveredFace)
+	-- 3. Bind interaction clicks via our MouseTouch to guarantee Mobile Support!
+	self._adornmentsTrove:Connect(self._mouseTouch.LeftDown, function(pos: Vector2)
+		-- We construct a RaycastParams to ONLY look for our active handle parts
+		local raycastParams = RaycastParams.new()
+		raycastParams.FilterType = Enum.RaycastFilterType.Include
+
+		local activeParts = {}
+		for _, part in pairs(self._activeHandles) do
+			table.insert(activeParts, part)
+		end
+		raycastParams.FilterDescendantsInstances = activeParts
+
+		-- Cast a ray exactly where the user tapped or clicked
+		local hitResult = self._mouseTouch:Raycast(raycastParams, 1000, pos)
+
+		if hitResult and hitResult.Instance then
+			-- Find which normalId this hit part corresponds to
+			for normalId, part in pairs(self._activeHandles) do
+				if part == hitResult.Instance then
+					-- Trigger visual hover update instantly for mobile feel
+					self._hoveredFace = normalId
+					self:_onMouseDown(normalId)
+					break
+				end
+			end
 		end
 	end)
 end

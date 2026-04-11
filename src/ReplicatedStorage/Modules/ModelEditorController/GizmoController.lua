@@ -21,6 +21,7 @@ local Handles = require(script.Parent.Modules.Handles)
 local HistoryManager = require(script.Parent.HistoryManager)
 local ArcHandles = require(script.Parent.Modules.ArcHandles)
 local MultiTouch = require(ReplicatedStorage.NonWallyPackages.MultiTouch)
+local ArcBallAndRingHandles = require(script.Parent.Modules.ArcBallAndRingHandles)
 
 -- TODO removeOninteractfinished, just change mode to idle manually
 local mouseTouch = MouseTouch.new()
@@ -62,22 +63,30 @@ local function TweenFunction(tweenInfo, callback)
 end
 
 function GizmoController.Setup(trove, onInteractFinished)
+	-- Setup Scroll To Scale globally so it runs regardless of selection!
+	GizmoController._SetupScrollToScale(trove)
+
 	local gizmoTrove = trove:Extend()
 
 	local function updateGizmo()
 		gizmoTrove:Clean()
 
 		local model = Props.SelectedModel:Get()
+
+		-- If we have no model or gizmos are hidden, do nothing.
 		if (not Props.ShowGizmos:Get()) or not model then
 			Pass()
-		elseif Props.ActiveGizmo:Get() == Enums.Gizmos.Transform then
-			GizmoController._SetupTransformGizmo(gizmoTrove, model, onInteractFinished)
-		elseif Props.ActiveGizmo:Get() == Enums.Gizmos.Move then
-			GizmoController._SetupMoveGizmo(gizmoTrove, model, onInteractFinished)
-		elseif Props.ActiveGizmo:Get() == Enums.Gizmos.Rotate then
-			GizmoController._SetupRotationGizmo(gizmoTrove, model, onInteractFinished)
-		elseif Props.ActiveGizmo:Get() == Enums.Gizmos.Scale then
-			GizmoController._SetupScaleGizmo(gizmoTrove, model, onInteractFinished)
+		else
+			-- Setup the specific active visual gizmo
+			if Props.ActiveGizmo:Get() == Enums.Gizmos.Transform then
+				GizmoController._SetupTransformGizmo(gizmoTrove, model, onInteractFinished)
+			elseif Props.ActiveGizmo:Get() == Enums.Gizmos.Move then
+				GizmoController._SetupMoveGizmo(gizmoTrove, model, onInteractFinished)
+			elseif Props.ActiveGizmo:Get() == Enums.Gizmos.Rotate then
+				GizmoController._SetupRotationGizmo(gizmoTrove, model, onInteractFinished)
+			elseif Props.ActiveGizmo:Get() == Enums.Gizmos.Scale then
+				GizmoController._SetupScaleGizmo(gizmoTrove, model, onInteractFinished)
+			end
 		end
 	end
 
@@ -118,72 +127,41 @@ function GizmoController._ScaleGizmo(gizmo, model, useTween)
 end
 
 ---------------------------------------------------------------------
--- TRANSFORM GIZMO
+-- GLOBAL SCROLL TO SCALE
 ---------------------------------------------------------------------
-function GizmoController._SetupTransformGizmo(gizmoTrove, model, onInteractFinished)
-	local gizmo = Props.Instances.TransformGizmo
-	gizmo.Parent = Workspace
-	Props.Instances.TransformGizmoBallGui.Adornee = gizmo.RotateBall
-
-	gizmoTrove:Add(function()
-		gizmo.Parent = nil
-		Props.Instances.TransformGizmoBallGui.Adornee = nil
-	end)
-
-	gizmoTrove:AddPromise(GizmoController._ScaleGizmo(gizmo, model, true))
-
-	local function UpdateGizmoVisuals()
-		-- Even if the gizmo is parented to nil while scaling, pivoting it is safe
-		-- and ensures it's in the correct position when parented back to Workspace.
-		gizmo:PivotTo(Props.SelectedModel:Get():GetPivot())
-		local ballSize = gizmo.RotateBall.Size.X
-		Props.Instances.TransformGizmoBallGui.Size = UDim2.fromScale(ballSize, ballSize)
-	end
-
-	UpdateGizmoVisuals()
-	gizmoTrove:Add(RunService.RenderStepped:Connect(UpdateGizmoVisuals))
-
-	local gizmoClickDetector = gizmoTrove:Add(ClickDetector.new(2))
-	gizmoClickDetector:SetResultFilterFunction(function(result)
-		return result.Instance:IsDescendantOf(gizmo)
-	end)
-	gizmoClickDetector.MouseIcon = MouseIcons.GrabOpen
-
-	gizmoTrove:Add(gizmoClickDetector.LeftDown:Connect(function(part)
-		if part == gizmo.YBounds then
-			RotateTool.Activate(model, model:GetPivot().UpVector):finally(function()
-				onInteractFinished()
-			end)
-		end
-	end))
-
-	gizmoTrove:Add(Props.Instances.TransformGizmoBallGui.Button.MouseButton1Down:Connect(function()
-		local rotateballDistance = (gizmo.RotateBall.Position - gizmo.Pivot.Position).Magnitude
-		local tempDrag = GeometricDrag.new(gizmo.PrimaryPart)
-		local mouseOffset = tempDrag:GetMouseOffset(gizmo.Pivot.Position)
-		tempDrag:Destroy()
-
-		RotateTool.ActivateArcball(model, rotateballDistance, mouseOffset):finally(function()
-			onInteractFinished()
-		end)
-	end))
-
+function GizmoController._SetupScrollToScale(trove)
 	local scaleClickDetector = ClickDetector.new(-1)
 	scaleClickDetector:SetResultFilterFunction(function(result)
-		return result.Instance:IsDescendantOf(model)
+		if result then
+			return Props.Instances.ModelsFolder:IsAncestorOf(result.Instance)
+		end
 	end)
 
-	local scrollTrove = gizmoTrove:Extend()
+	local scrollTrove = trove:Extend()
 
 	-- Variables to manage our "Scrolling Session"
 	local scrollActionTrove = nil
 	local scrollTimeoutThread = nil
 	local originalWeld = nil
+	local activeModelToScale = nil -- Tracks which model we are scaling during an active session
+
+	-- Helper to find the Model object belonging to the part we are hovering over
+	local function getTargetModel(part)
+		if not part then
+			return nil
+		end
+		local model = part:FindFirstAncestorOfClass("Model")
+
+		-- Prevent accidentally grabbing Workspace itself
+		if model and model ~= Workspace then
+			return model
+		end
+		return nil
+	end
 
 	-- Helper function to properly terminate a scroll session
 	local function endScrollSession()
 		if scrollTimeoutThread then
-			-- Prevent "cannot cancel thread" error by ensuring we don't cancel the currently executing thread
 			if coroutine.running() ~= scrollTimeoutThread then
 				task.cancel(scrollTimeoutThread)
 			end
@@ -193,25 +171,24 @@ function GizmoController._SetupTransformGizmo(gizmoTrove, model, onInteractFinis
 			scrollActionTrove:Clean()
 			scrollActionTrove = nil
 		end
-		-- Note: We no longer manually unfreeze the camera here. RenderStepped handles it!
+		activeModelToScale = nil
 	end
 
 	-- Ensures the thread doesn't continue running if the gizmo is suddenly cleaned up
 	scrollTrove:Add(endScrollSession)
 
-	-- NEW LOGIC: Preemptively lock the camera using RenderStepped
+	-- Preemptively lock the camera using RenderStepped
 	scrollTrove:Add(RunService.RenderStepped:Connect(function()
 		local hoveringPart = scaleClickDetector:GetBasePart(true)
+		-- FIXED: Removed "or Props.SelectedModel:Get()". Now it ONLY checks if you are actually hovering over a model.
+		local targetModel = getTargetModel(hoveringPart)
 		local isHoveringOrScaling = false
 
 		if UserInputService.PreferredInput == Enum.PreferredInput.Touch then
-			if hoveringPart then
-				isHoveringOrScaling = true
-			else
-				isHoveringOrScaling = #MultiTouch.TouchPositions:Get() > 0
-			end
+			-- MODIFIED: Do not lock the camera for "scroll to scale" on mobile/touch devices
+			isHoveringOrScaling = false
 		else
-			isHoveringOrScaling = if hoveringPart then true else false
+			isHoveringOrScaling = if targetModel then true else false
 		end
 
 		-- Keep the camera locked if a scaling session is already active
@@ -229,16 +206,23 @@ function GizmoController._SetupTransformGizmo(gizmoTrove, model, onInteractFinis
 
 	scrollTrove:Add(mouseTouch.Scrolled:Connect(function(delta)
 		local hoveringPart = scaleClickDetector:GetBasePart(true)
+		local targetModel = nil
+
+		-- Either use the model we're already scaling, or the one we're hovering over
+		if scrollActionTrove ~= nil then
+			targetModel = activeModelToScale
+		else
+			-- FIXED: Removed "or Props.SelectedModel:Get()". Now requires hovering to start.
+			targetModel = getTargetModel(hoveringPart)
+		end
+
 		local isScaling = false
 
 		if UserInputService.PreferredInput == Enum.PreferredInput.Touch then
-			if hoveringPart then
-				isScaling = true
-			else
-				isScaling = #MultiTouch.TouchPositions:Get() > 0
-			end
+			-- MODIFIED: Explicitly prevent "scroll to scale" from initiating on mobile/touch devices
+			isScaling = false
 		else
-			isScaling = if hoveringPart then true else false
+			isScaling = if targetModel then true else false
 		end
 
 		-- If a scaling session is already active, continue scaling!
@@ -254,14 +238,15 @@ function GizmoController._SetupTransformGizmo(gizmoTrove, model, onInteractFinis
 			end
 		end
 
-		if isScaling then
+		if isScaling and targetModel then
 			-- 1. Initialize the scaling session if it hasn't started yet
 			if not scrollActionTrove then
 				scrollActionTrove = scrollTrove:Extend()
-				originalWeld = ModelEditorUtils.GetWeldedPart(model)
+				activeModelToScale = targetModel
+				originalWeld = ModelEditorUtils.GetWeldedPart(activeModelToScale)
 
 				-- Prepare model (unwelding temporarily prevents constraint fighting)
-				scrollActionTrove:Add(ModelEditorUtils.PrepareForMoving(model))
+				scrollActionTrove:Add(ModelEditorUtils.PrepareForMoving(activeModelToScale))
 
 				-- HIDE CURSOR: If not on a touch device, hide the cursor for the duration of the trove
 				if UserInputService.PreferredInput ~= Enum.PreferredInput.Touch then
@@ -281,10 +266,7 @@ function GizmoController._SetupTransformGizmo(gizmoTrove, model, onInteractFinis
 				-- INTERRUPT SCALING ON MOUSE MOVEMENT
 				scrollActionTrove:Add(UserInputService.InputChanged:Connect(function(input)
 					if input.UserInputType == Enum.UserInputType.MouseMovement then
-						-- For unlocked mice, Delta is often Vector3.zero. Compare absolute screen positions instead!
 						local currentPos = UserInputService:GetMouseLocation()
-
-						-- Using a tiny 2-pixel deadzone so minor vibrations don't accidentally cancel the session
 						if (currentPos - startMousePos).Magnitude > 2 then
 							endScrollSession()
 						end
@@ -292,16 +274,22 @@ function GizmoController._SetupTransformGizmo(gizmoTrove, model, onInteractFinis
 				end))
 
 				-- Setup the cleanup function for when the scroll session FINISHES
-				-- This will automatically run if 1 second passes, OR if the gizmo is destroyed/cleaned up.
 				scrollActionTrove:Add(function()
 					if originalWeld then
-						ModelEditorUtils.PlaceOn(model, originalWeld)
+						ModelEditorUtils.PlaceOn(activeModelToScale, originalWeld)
 					end
-					ModelEditorUtils.UpdateSymmetricalParts(model, originalWeld)
+					ModelEditorUtils.UpdateSymmetricalParts(activeModelToScale, originalWeld)
 					HistoryManager.AddUndoStep()
 
-					-- Update the transform gizmo bounds to fit the new model size
-					GizmoController._ScaleGizmo(gizmo, model, false)
+					-- Update the transform gizmo bounds to fit the new model size, ONLY if it's the active gizmo AND we scaled the currently selected model
+					if
+						Props.ActiveGizmo:Get() == Enums.Gizmos.Transform
+						and activeModelToScale == Props.SelectedModel:Get()
+					then
+						GizmoController._ScaleGizmo(Props.Instances.TransformGizmo, activeModelToScale, false)
+					end
+
+					activeModelToScale = nil
 				end)
 			end
 
@@ -314,27 +302,98 @@ function GizmoController._SetupTransformGizmo(gizmoTrove, model, onInteractFinis
 			end
 
 			-- 3. Calculate and apply the scale for this specific scroll tick
-			local SCALE_SENSITIVITY = 0.1 -- You can adjust how fast it scales here
-			local currentScale = model:GetScale()
+			local SCALE_SENSITIVITY = 0.1
+			local currentScale = activeModelToScale:GetScale()
 			local newScale = math.max(0.01, currentScale + (delta * SCALE_SENSITIVITY))
 
-			model:ScaleTo(newScale)
-			ModelEditorUtils.UpdateSymmetricalParts(model, originalWeld)
+			ModelEditorUtils.ScaleStackTo(activeModelToScale, newScale)
+			ModelEditorUtils.UpdateSymmetricalParts(activeModelToScale, originalWeld)
 
-			-- Instantly scale the gizmo to match the model while scrolling
-			GizmoController._ScaleGizmo(gizmo, model, false)
+			-- Instantly scale the gizmo to match the model while scrolling, ONLY if we are scaling the currently selected model
+			if
+				Props.ActiveGizmo:Get() == Enums.Gizmos.Transform
+				and activeModelToScale == Props.SelectedModel:Get()
+			then
+				GizmoController._ScaleGizmo(Props.Instances.TransformGizmo, activeModelToScale, false)
+			end
 
 			-- 4. Start a new timeout thread. If the user stops scrolling for 1 second, finish up.
 			scrollTimeoutThread = task.delay(1, endScrollSession)
 		end
 	end))
-
-	-- Ensure camera is definitively unfrozen if the gizmo is deselected entirely
-	gizmoTrove:Add(function()
-		Props.FreezeCamera:Set(false)
-	end)
 end
 
+---------------------------------------------------------------------
+-- TRANSFORM GIZMO
+---------------------------------------------------------------------
+function GizmoController._SetupTransformGizmo(gizmoTrove, model, onInteractFinished)
+	-- Tweak this value between 0.1 and 1.0 to adjust sensitivity.
+	-- 0.5 means it rotates half as fast as your mouse moves.
+	local ROTATION_SENSITIVITY = 0.5
+
+	local handles = gizmoTrove:Add(
+		ArcBallAndRingHandles.new(
+			ReplicatedStorage.Assets.ModelEditorController.RotationRing,
+			ReplicatedStorage.Assets.ModelEditorController.SphereHandle
+		)
+	)
+
+	handles:SetAdornee(model)
+
+	local dragTrove = nil
+	local originalWeld = nil
+	local initialPivot = nil
+
+	gizmoTrove:Add(handles.DragStarted:Connect(function(mode)
+		dragTrove = gizmoTrove:Extend()
+		originalWeld = ModelEditorUtils.GetWeldedPart(model)
+
+		-- Capture the initial pivot at the exact moment the drag starts
+		initialPivot = model:GetPivot()
+
+		-- Prepare model (anchors base and symmetrical clones automatically)
+		dragTrove:Add(ModelEditorUtils.PrepareForMoving(model))
+	end))
+
+	gizmoTrove:Add(handles.RingDragged:Connect(function(deltaAngle)
+		if not dragTrove or not initialPivot then
+			return
+		end
+
+		-- Apply sensitivity multiplier to the raw angle
+		local dampedAngle = deltaAngle * ROTATION_SENSITIVITY
+
+		-- Ring is a 1D local rotation around the model's Y axis
+		local rotationDelta = CFrame.Angles(0, dampedAngle, 0)
+
+		-- Apply absolute rotation directly over the initial pivot
+		model:PivotTo(initialPivot * rotationDelta)
+		ModelEditorUtils.UpdateSymmetricalParts(model, originalWeld)
+	end))
+
+	gizmoTrove:Add(handles.ArcballDragged:Connect(function(rotationDelta)
+		if not dragTrove or not initialPivot then
+			return
+		end
+
+		-- Apply absolute rotation directly over the initial pivot
+		model:PivotTo(initialPivot * rotationDelta)
+		ModelEditorUtils.UpdateSymmetricalParts(model, originalWeld)
+	end))
+
+	gizmoTrove:Add(handles.DragEnded:Connect(function()
+		if dragTrove then
+			dragTrove:Clean()
+			dragTrove = nil
+		end
+
+		if originalWeld then
+			ModelEditorUtils.PlaceOn(model, originalWeld)
+		end
+		ModelEditorUtils.UpdateSymmetricalParts(model, originalWeld)
+		HistoryManager.AddUndoStep()
+	end))
+end
 ---------------------------------------------------------------------
 -- MOVE GIZMO
 ---------------------------------------------------------------------
@@ -454,10 +513,10 @@ function GizmoController._SetupScaleGizmo(gizmoTrove, model, onInteractFinished)
 			-- 3. Calculate new scale
 			-- delta is the distance dragged in studs.
 			-- SCALE_SENSITIVITY controls how fast the object scales based on mouse movement.
-			local SCALE_SENSITIVITY = 1
+			local SCALE_SENSITIVITY = 0.6
 			local newScale = math.max(0.01, startScale + (delta * SCALE_SENSITIVITY))
 
-			model:ScaleTo(newScale)
+			ModelEditorUtils.ScaleStackTo(model, newScale)
 
 			-- 4. Update symmetrical clones.
 			-- ModelEditorUtils naturally applies the base model's GetScale() to its clones inside this function!

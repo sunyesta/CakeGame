@@ -202,24 +202,27 @@ function CakeDecoratorGui:Construct()
 			-- Apply hover growth effect to dynamic Asset Cards
 			ApplyHoverGrowth(loadedTrove, card, 1.05)
 
-			print("Asset", assetName)
-
-			local insideButtonTrove = self._Trove:Extend()
+			-- Handle Visual Hover States exclusively
 			loadedTrove:Add(card.MouseEnter:Connect(function()
 				ClickDetector.OverrideIcon = ModelEditorController.CursorIcons.GrabOpen
-				insideButtonTrove:Add(function()
+			end))
+
+			loadedTrove:Add(card.MouseLeave:Connect(function()
+				ClickDetector.OverrideIcon = nil
+			end))
+
+			-- Handle the Drag Activation un-nested, using InputBegan for instantaneous touch response!
+			loadedTrove:Add(card.InputBegan:Connect(function(input)
+				if
+					input.UserInputType == Enum.UserInputType.MouseButton1
+					or input.UserInputType == Enum.UserInputType.Touch
+				then
+					-- Clear the icon explicitly to avoid mobile sticky-hover
 					ClickDetector.OverrideIcon = nil
-				end)
-				insideButtonTrove:Add(card.MouseButton1Down:Connect(function()
-					insideButtonTrove:Clean()
 					ModelEditorController.PlaceModel(assetName):andThen(function()
 						print("Model successfully placed!")
 					end)
-				end))
-
-				insideButtonTrove:Add(card.MouseLeave:Connect(function()
-					insideButtonTrove:Clean()
-				end))
+				end
 			end))
 		end
 	)
@@ -383,7 +386,16 @@ function CakeDecoratorGui:Construct()
 	end))
 
 	local symmetryCountScrubTrove = self._Trove:Extend()
-	self._Trove:Add(self.SymmetryCountScrubber.MouseButton1Down:Connect(function()
+
+	-- Upgraded to InputBegan to capture mobile touch instantly
+	self._Trove:Add(self.SymmetryCountScrubber.InputBegan:Connect(function(input)
+		if
+			input.UserInputType ~= Enum.UserInputType.MouseButton1
+			and input.UserInputType ~= Enum.UserInputType.Touch
+		then
+			return
+		end
+
 		isScrubbing = true
 		updateScrubberIcon()
 

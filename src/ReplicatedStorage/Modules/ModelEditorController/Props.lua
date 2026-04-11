@@ -23,7 +23,7 @@ Props.FreezeCamera = Property.new(false)
 
 -- NEW: Configures how many models spawn across X, Y, and Z axes.
 -- Vector3.new(1, 1, 1) means exactly 1 model (no extra clones). Vector3.new(1, 4, 1) means 4 around the Y axis!
-Props.RadialSymmetryCount = Property.new(Vector3.new(1, 3, 1))
+Props.RadialSymmetryCount = Property.new(Vector3.new(1, 1, 1))
 
 Props.Config = {}
 Props.Instances = {}

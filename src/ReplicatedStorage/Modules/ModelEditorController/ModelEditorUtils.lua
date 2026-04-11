@@ -292,7 +292,7 @@ function ModelEditorUtils.UpdateSymmetricalParts(activeModel, activeModelTarget)
 			local targetCFrame = centerCFrame * rotation * baseOffset
 
 			clone:PivotTo(targetCFrame)
-			clone:ScaleTo(activeScale)
+			ModelEditorUtils.ScaleStackTo(clone, activeScale)
 
 			-- CONDITION: Handle welding based on what the activeModel is
 			clone:SetAttribute("SymmetryWeldTarget", targetPart.Name)
@@ -436,6 +436,40 @@ function ModelEditorUtils.CreateDiscardHighlight()
 	DiscardModelHighlight.Enabled = true
 
 	return DiscardModelHighlight
+end
+
+function ModelEditorUtils.ScaleStackTo(baseModel, baseModelScale)
+	local stackInfo = {}
+
+	-- Recursively map all models mounted in the stack and cache their current parents
+	local function collectMountedRecursively(currentModel)
+		for _, mountedModel in ModelEditorUtils.GetMountedModels(currentModel) do
+			-- Ensure we don't hit infinite loops if models are somehow cross-welded
+			if mountedModel ~= baseModel and not stackInfo[mountedModel] then
+				stackInfo[mountedModel] = mountedModel.Parent
+				collectMountedRecursively(mountedModel)
+			end
+		end
+	end
+
+	collectMountedRecursively(baseModel)
+
+	-- STEP 1: Temporarily parent the entire stack directly to the baseModel.
+	-- This makes them descendants, meaning Roblox's internal `ScaleTo` engine
+	-- will mathematically scale their spatial CFrame offsets automatically.
+	for mountedModel in stackInfo do
+		if not mountedModel:IsDescendantOf(baseModel) then
+			mountedModel.Parent = baseModel
+		end
+	end
+
+	-- STEP 2: Scale everything at once
+	baseModel:ScaleTo(baseModelScale)
+
+	-- STEP 3: Return them all to their exact original hierarchies
+	for mountedModel, oldParent in stackInfo do
+		mountedModel.Parent = oldParent
+	end
 end
 
 return ModelEditorUtils

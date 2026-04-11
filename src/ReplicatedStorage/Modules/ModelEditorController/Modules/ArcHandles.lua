@@ -201,20 +201,48 @@ function ArcHandles:_render()
 		-- Calculate the exact multiplier required to reach the target size in studs
 		local scaleFactor = newSizeInStuds / templateBaseSize
 
-		for _, part in pairs(self._activeHandles) do
-			part.Size = templateSize * scaleFactor
+		local axisScaleOrder = {
+			Enum.Axis.Z,
+			Enum.Axis.X,
+			Enum.Axis.Y,
+		}
+
+		for i, axis in pairs(axisScaleOrder) do
+			local part = self._activeHandles[axis]
+			part.Size = templateSize * (scaleFactor + (i - 1) * 0.35)
+			i += 1
 		end
 	end))
 
-	-- Bind continuous positioning and hover state checks
 	self._adornmentsTrove:Connect(RunService.RenderStepped, function()
 		self:_updatePositionsAndHover()
 	end)
 
-	-- Bind interaction clicks via our custom ClickDetector
-	self._adornmentsTrove:Connect(self._clickDetector.LeftDown, function(part: BasePart)
-		if self._hoveredAxis then
-			self:_onMouseDown(self._hoveredAxis)
+	-- 3. Bind interaction clicks via our MouseTouch to guarantee Mobile Support!
+	self._adornmentsTrove:Connect(self._mouseTouch.LeftDown, function(pos: Vector2)
+		-- We construct a RaycastParams to ONLY look for our active handle parts
+		local raycastParams = RaycastParams.new()
+		raycastParams.FilterType = Enum.RaycastFilterType.Include
+
+		local activeParts = {}
+		for _, part in pairs(self._activeHandles) do
+			table.insert(activeParts, part)
+		end
+		raycastParams.FilterDescendantsInstances = activeParts
+
+		-- Cast a ray exactly where the user tapped or clicked
+		local hitResult = self._mouseTouch:Raycast(raycastParams, 1000, pos)
+
+		if hitResult and hitResult.Instance then
+			-- Find which axis this hit part corresponds to
+			for axis, part in pairs(self._activeHandles) do
+				if part == hitResult.Instance then
+					-- Trigger visual hover update instantly for mobile feel
+					self._hoveredAxis = axis
+					self:_onMouseDown(axis)
+					break
+				end
+			end
 		end
 	end)
 end
