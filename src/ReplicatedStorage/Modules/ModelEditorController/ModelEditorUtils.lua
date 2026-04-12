@@ -129,7 +129,7 @@ function ModelEditorUtils.CanPlace(player, canPlaceFunc, model, cframe, placeOn)
 end
 
 function ModelEditorUtils.GetMountedModels(model)
-	local attachedParts = WeldUtils.GetAttachedParts(model.PrimaryPart)
+	local attachedParts = WeldUtils.GetMountedParts(model.PrimaryPart)
 	local attachedModels = {}
 
 	for _, part in attachedParts do
