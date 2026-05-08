@@ -1,12 +1,12 @@
 [
     {
-        "id": "78:5",
-        "name": "image 24 (Multiply Overlay)",
-        "type": "GROUP",
-        "x": 72,
-        "y": 784,
-        "width": 25,
-        "height": 25,
+        "id": "143:7",
+        "name": "Rectangle 97",
+        "type": "RECTANGLE",
+        "x": 908,
+        "y": 239,
+        "width": 39,
+        "height": 39,
         "rotation": 0,
         "layoutAlign": "INHERIT",
         "layoutGrow": 0,
@@ -15,198 +15,48 @@
         "isMask": false,
         "visible": true,
         "locked": false,
-        "effects": [],
-        "backgrounds": [],
-        "exportSettings": [
+        "fills": [
             {
-                "format": "PNG",
-                "suffix": "",
-                "contentsOnly": true,
-                "colorProfile": "DOCUMENT",
-                "constraint": {
-                    "type": "SCALE",
-                    "value": 3
-                }
+                "type": "SOLID",
+                "visible": true,
+                "opacity": 1,
+                "blendMode": "NORMAL",
+                "color": {
+                    "r": 0.9921568632125854,
+                    "g": 0.9882352948188782,
+                    "b": 0.9921568632125854
+                },
+                "boundVariables": {}
             }
         ],
-        "effectStyleId": "",
-        "children": [
+        "strokes": [
             {
-                "id": "78:2",
-                "name": "image 24 (Alpha Mask)",
-                "type": "RECTANGLE",
-                "x": 72,
-                "y": 784,
-                "width": 25,
-                "height": 25,
-                "rotation": 0,
-                "layoutAlign": "INHERIT",
-                "layoutGrow": 0,
-                "opacity": 1,
-                "blendMode": "PASS_THROUGH",
-                "isMask": true,
+                "type": "SOLID",
                 "visible": true,
-                "locked": false,
-                "fills": [
-                    {
-                        "type": "IMAGE",
-                        "visible": true,
-                        "opacity": 1,
-                        "blendMode": "NORMAL",
-                        "scaleMode": "FILL",
-                        "imageTransform": [
-                            [
-                                1,
-                                0,
-                                0
-                            ],
-                            [
-                                0,
-                                1,
-                                0
-                            ]
-                        ],
-                        "scalingFactor": 0.5,
-                        "rotation": 0,
-                        "filters": {
-                            "exposure": 0,
-                            "contrast": 0,
-                            "saturation": 0,
-                            "temperature": 0,
-                            "tint": 0,
-                            "highlights": 0,
-                            "shadows": 0
-                        },
-                        "imageHash": "15df2592da0159a56f494f7518fc8024403815ef"
-                    }
-                ],
-                "strokes": [],
-                "strokeWeight": 1,
-                "strokeAlign": "INSIDE",
-                "cornerRadius": 0,
-                "cornerSmoothing": 0,
-                "effects": [],
-                "exportSettings": [],
-                "constraints": {
-                    "horizontal": "MIN",
-                    "vertical": "MIN"
-                },
-                "dashPattern": [],
-                "fillStyleId": "",
-                "strokeStyleId": "",
-                "effectStyleId": ""
-            },
-            {
-                "id": "78:3",
-                "name": "image 24",
-                "type": "RECTANGLE",
-                "x": 72,
-                "y": 784,
-                "width": 25,
-                "height": 25,
-                "rotation": 0,
-                "layoutAlign": "INHERIT",
-                "layoutGrow": 0,
                 "opacity": 1,
-                "blendMode": "PASS_THROUGH",
-                "isMask": false,
-                "visible": true,
-                "locked": false,
-                "fills": [
-                    {
-                        "type": "IMAGE",
-                        "visible": true,
-                        "opacity": 1,
-                        "blendMode": "NORMAL",
-                        "scaleMode": "FILL",
-                        "imageTransform": [
-                            [
-                                1,
-                                0,
-                                0
-                            ],
-                            [
-                                0,
-                                1,
-                                0
-                            ]
-                        ],
-                        "scalingFactor": 0.5,
-                        "rotation": 0,
-                        "filters": {
-                            "exposure": 0,
-                            "contrast": 0,
-                            "saturation": 0,
-                            "temperature": 0,
-                            "tint": 0,
-                            "highlights": 0,
-                            "shadows": 0
-                        },
-                        "imageHash": "15df2592da0159a56f494f7518fc8024403815ef"
-                    }
-                ],
-                "strokes": [],
-                "strokeWeight": 1,
-                "strokeAlign": "INSIDE",
-                "cornerRadius": 0,
-                "cornerSmoothing": 0,
-                "effects": [],
-                "exportSettings": [],
-                "constraints": {
-                    "horizontal": "MIN",
-                    "vertical": "MIN"
+                "blendMode": "NORMAL",
+                "color": {
+                    "r": 0.8784313797950745,
+                    "g": 0.2705882489681244,
+                    "b": 0.5372549295425415
                 },
-                "dashPattern": [],
-                "fillStyleId": "",
-                "strokeStyleId": "",
-                "effectStyleId": ""
-            },
-            {
-                "id": "78:4",
-                "name": "Multiply Color",
-                "type": "RECTANGLE",
-                "x": 72,
-                "y": 784,
-                "width": 25,
-                "height": 25,
-                "rotation": 0,
-                "layoutAlign": "INHERIT",
-                "layoutGrow": 0,
-                "opacity": 1,
-                "blendMode": "MULTIPLY",
-                "isMask": false,
-                "visible": true,
-                "locked": false,
-                "fills": [
-                    {
-                        "type": "SOLID",
-                        "visible": true,
-                        "opacity": 1,
-                        "blendMode": "NORMAL",
-                        "color": {
-                            "r": 0.9254902005195618,
-                            "g": 0.2823529541492462,
-                            "b": 0.6000000238418579
-                        },
-                        "boundVariables": {}
-                    }
-                ],
-                "strokes": [],
-                "strokeWeight": 1,
-                "strokeAlign": "INSIDE",
-                "cornerRadius": 0,
-                "cornerSmoothing": 0,
-                "effects": [],
-                "exportSettings": [],
-                "constraints": {
-                    "horizontal": "MIN",
-                    "vertical": "MIN"
-                },
-                "dashPattern": [],
-                "fillStyleId": "",
-                "strokeStyleId": "",
-                "effectStyleId": ""
+                "boundVariables": {}
             }
-        ]
+        ],
+        "strokeWeight": 3,
+        "strokeAlign": "INSIDE",
+        "borderStrokePosition": "inner",
+        "cornerRadius": 100,
+        "cornerSmoothing": 0,
+        "effects": [],
+        "exportSettings": [],
+        "constraints": {
+            "horizontal": "MIN",
+            "vertical": "MIN"
+        },
+        "dashPattern": [],
+        "fillStyleId": "",
+        "strokeStyleId": "",
+        "effectStyleId": ""
     }
 ]

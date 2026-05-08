@@ -1,13 +1,12 @@
 --!strict
 -- Figma to Roblox JSON Importer Plugin
--- Handles responsive coordinate mapping, property sync, and developer workflow safety.
+-- Handles responsive coordinate mapping using absolute screen scaling.
 
 local HttpService = game:GetService("HttpService")
 local Selection = game:GetService("Selection")
 local ChangeHistoryService = game:GetService("ChangeHistoryService")
-local GuiService = game:GetService("GuiService") -- Used to handle Mac/PC top-bar differences
+local GuiService = game:GetService("GuiService")
 
--- Ensure this script is running as a plugin inside Roblox Studio
 if not plugin then
 	return
 end
@@ -16,26 +15,17 @@ end
 -- 1. Interface & Interaction Setup
 --------------------------------------------------------------------------------
 local toolbar = plugin:CreateToolbar("Figma Tools")
-local pluginButton = toolbar:CreateButton(
-	"Start",
-	"Toggle Figma JSON Input",
-	"rbxassetid://137558628333270", -- Placeholder icon
-	"Start"
-)
+local pluginButton = toolbar:CreateButton("Start", "Toggle Figma JSON Input", "rbxassetid://137558628333270", "Start")
 
--- Create a Dockable Widget
 local widgetInfo = DockWidgetPluginGuiInfo.new(Enum.InitialDockState.Right, false, false, 300, 250, 200, 200)
-
 local widget = plugin:CreateDockWidgetPluginGui("FigmaImporterWidget", widgetInfo)
 widget.Title = "Figma to Roblox JSON"
 
--- Create Widget UI
 local bgFrame = Instance.new("Frame")
 bgFrame.Size = UDim2.new(1, 0, 1, 0)
 bgFrame.BackgroundColor3 = Color3.fromRGB(45, 45, 45)
 bgFrame.Parent = widget
 
--- Configuration Frame for Base Resolution
 local configFrame = Instance.new("Frame")
 configFrame.Size = UDim2.new(1, 0, 0, 40)
 configFrame.BackgroundTransparency = 1
@@ -72,7 +62,6 @@ inputBox.Text = ""
 inputBox.TextWrapped = true
 inputBox.Parent = bgFrame
 
--- Toggle Widget Visibility
 pluginButton.Click:Connect(function()
 	widget.Enabled = not widget.Enabled
 end)
@@ -80,100 +69,105 @@ end)
 --------------------------------------------------------------------------------
 -- 2. Intelligent Coordinate Mapping Helpers
 --------------------------------------------------------------------------------
-
--- Helper to grab the Base Resolution from the UI TextBoxes
 local function GetBaseResolution(): Vector2
 	local x = tonumber(resXBox.Text) or 1920
 	local y = tonumber(resYBox.Text) or 1080
 	return Vector2.new(x, y)
 end
 
--- Calculates the absolute Figma-space metrics based on the screen's true rendering size.
--- This approach gracefully handles Mac Retina displays, PC aspect ratios, and nested Folders!
-local function GetFigmaMetrics(guiObject: GuiObject?): (Vector2, Vector2)
-	local figmaBaseRes = GetBaseResolution()
-
-	if not guiObject then
-		return Vector2.new(0, 0), figmaBaseRes
-	end
-
-	local screenGui = guiObject:FindFirstAncestorWhichIsA("ScreenGui")
-	local screenRes = screenGui and screenGui.AbsoluteSize or figmaBaseRes
-
-	-- Prevent division by zero
-	local safeScreenX = math.max(1, screenRes.X)
-	local safeScreenY = math.max(1, screenRes.Y)
-
-	-- Calculate the mathematical ratio between Roblox Screen and Figma Base
-	local ratioX = figmaBaseRes.X / safeScreenX
-	local ratioY = figmaBaseRes.Y / safeScreenY
-
-	-- Handle Mac notches / PC topbars (Gui Insets)
-	local insetX, insetY = 0, 0
-	if screenGui and not screenGui.IgnoreGuiInset then
-		local topLeft = GuiService:GetGuiInset()
-		insetX = topLeft.X
-		insetY = topLeft.Y
-	end
-
-	-- Get the TRUE absolute position, detached from Studio UI insets
-	local trueAbsPosX = guiObject.AbsolutePosition.X - insetX
-	local trueAbsPosY = guiObject.AbsolutePosition.Y - insetY
-
-	-- Convert Roblox absolute pixels into Figma space coordinates
-	local figmaPosX = trueAbsPosX * ratioX
-	local figmaPosY = trueAbsPosY * ratioY
-	local figmaSizeX = guiObject.AbsoluteSize.X * ratioX
-	local figmaSizeY = guiObject.AbsoluteSize.Y * ratioY
-
-	-- ROBLOX API UPDATE: Children of a ScrollingFrame scale relative to the CanvasSize!
-	if guiObject:IsA("ScrollingFrame") then
-		figmaSizeX = guiObject.AbsoluteCanvasSize.X * ratioX
-		figmaSizeY = guiObject.AbsoluteCanvasSize.Y * ratioY
-	end
-
-	return Vector2.new(figmaPosX, figmaPosY), Vector2.new(figmaSizeX, figmaSizeY)
-end
-
 --------------------------------------------------------------------------------
 -- 3. Property Synchronization & Logic
 --------------------------------------------------------------------------------
-
 local function ApplyFigmaData(target: GuiObject, data: any)
-	-- Using FindFirstAncestorWhichIsA automatically bypasses Folders and finds the true Gui parent!
 	local parentGui = target:FindFirstAncestorWhichIsA("GuiObject")
+	local screenGui = target:FindFirstAncestorWhichIsA("ScreenGui")
 
-	-- Get the perfect Figma space coordinates of our parent mapped from true screen pixels
-	local parentPos, parentSize = GetFigmaMetrics(parentGui)
+	local figmaBaseRes = GetBaseResolution()
 
-	-- Prevent dividing by zero if parent has no size yet
-	local safeParentSizeX = math.max(0.001, parentSize.X)
-	local safeParentSizeY = math.max(0.001, parentSize.Y)
+	-- Calculate total screen size including inset
+	local totalInsetX, totalInsetY = 0, 0
+	local insetTopLeft = Vector2.zero
+	if screenGui and not screenGui.IgnoreGuiInset then
+		local topLeft, bottomRight = GuiService:GetGuiInset()
+		totalInsetX = topLeft.X + bottomRight.X
+		totalInsetY = topLeft.Y + bottomRight.Y
+		insetTopLeft = topLeft
+	end
+
+	local viewportSize = figmaBaseRes
+	if screenGui then
+		viewportSize = screenGui.AbsoluteSize
+	elseif workspace.CurrentCamera then
+		viewportSize = workspace.CurrentCamera.ViewportSize
+	end
+
+	-- Full true monitor viewport size
+	local fullScreenX = math.max(1, viewportSize.X + totalInsetX)
+	local fullScreenY = math.max(1, viewportSize.Y + totalInsetY)
+
+	local ratioX = fullScreenX / figmaBaseRes.X
+	local ratioY = fullScreenY / figmaBaseRes.Y
 
 	local targetWidth = data.width or 0
 	local targetHeight = data.height or 0
+	local dataX = data.x or 0
+	local dataY = data.y or 0
+
+	-- Calculate Target's intended absolute size & position on physical screen
+	local targetAbsW = targetWidth * ratioX
+	local targetAbsH = targetHeight * ratioY
+	local targetAbsX = dataX * ratioX
+	local targetAbsY = dataY * ratioY
+
+	-- Determine Parent's ACTUAL Absolute Metrics
+	local parentAbsX, parentAbsY = 0, 0
+	local parentAbsW, parentAbsH = fullScreenX, fullScreenY
+
+	if parentGui then
+		parentAbsX = parentGui.AbsolutePosition.X
+		parentAbsY = parentGui.AbsolutePosition.Y
+		parentAbsW = parentGui.AbsoluteSize.X
+		parentAbsH = parentGui.AbsoluteSize.Y
+
+		-- Handle child elements scaling inside a ScrollingFrame
+		if parentGui:IsA("ScrollingFrame") then
+			parentAbsW = parentGui.AbsoluteCanvasSize.X
+			parentAbsH = parentGui.AbsoluteCanvasSize.Y
+			-- Compensate for canvas scroll offset
+			parentAbsX -= parentGui.CanvasPosition.X
+			parentAbsY -= parentGui.CanvasPosition.Y
+		end
+	elseif screenGui then
+		parentAbsX = insetTopLeft.X
+		parentAbsY = insetTopLeft.Y
+		parentAbsW = screenGui.AbsoluteSize.X
+		parentAbsH = screenGui.AbsoluteSize.Y
+	end
+
+	parentAbsW = math.max(0.001, parentAbsW)
+	parentAbsH = math.max(0.001, parentAbsH)
 
 	if target:IsA("ImageLabel") or target:IsA("ImageButton") then
 		target.ScaleType = Enum.ScaleType.Fit
 	end
 
-	-- 1. Apply Size (Responsive Scale based on the mathematical Parent Size)
-	if data.width and data.height then
-		target.Size = UDim2.new(targetWidth / safeParentSizeX, 0, targetHeight / safeParentSizeY, 0)
-	end
+	-- 1. Base Scale Calculations relative to parent's actual Absolute Size
+	local scaleX = targetAbsW / parentAbsW
+	local scaleY = targetAbsH / parentAbsH
 
-	-- 2. Apply Position
-	if data.x and data.y then
-		-- Find where we are relative to the parent's absolute Top-Left in Figma Space
-		local relativeX = data.x - parentPos.X
-		local relativeY = data.y - parentPos.Y
+	-- 2. Position Calculations relative to parent's actual Absolute Position
+	local relativeX = targetAbsX - parentAbsX
+	local relativeY = targetAbsY - parentAbsY
 
-		-- Adjust for the target's specific AnchorPoint
-		relativeX += (target.AnchorPoint.X * targetWidth)
-		relativeY += (target.AnchorPoint.Y * targetHeight)
+	-- Adjust for AnchorPoint
+	relativeX += (target.AnchorPoint.X * targetAbsW)
+	relativeY += (target.AnchorPoint.Y * targetAbsH)
 
-		target.Position = UDim2.new(relativeX / safeParentSizeX, 0, relativeY / safeParentSizeY, 0)
-	end
+	local posScaleX = relativeX / parentAbsW
+	local posScaleY = relativeY / parentAbsH
+
+	target.Size = UDim2.new(scaleX, 0, scaleY, 0)
+	target.Position = UDim2.new(posScaleX, 0, posScaleY, 0)
 
 	-- Opacity / Background Transparency
 	local figmaOpacity = data.opacity or 1
@@ -186,8 +180,6 @@ local function ApplyFigmaData(target: GuiObject, data: any)
 		if fill.type == "SOLID" then
 			local color = fill.color
 			target.BackgroundColor3 = Color3.new(color.r, color.g, color.b)
-
-			-- Combine element opacity with fill opacity
 			local fillOpacity = fill.opacity or 1
 			target.BackgroundTransparency = 1 - (figmaOpacity * fillOpacity)
 		elseif fill.type == "IMAGE" then
@@ -199,7 +191,7 @@ local function ApplyFigmaData(target: GuiObject, data: any)
 			end
 		end
 	else
-		target.BackgroundTransparency = 1 -- No fills = completely transparent
+		target.BackgroundTransparency = 1
 	end
 
 	-- Text Support
@@ -207,8 +199,19 @@ local function ApplyFigmaData(target: GuiObject, data: any)
 		if target:IsA("TextLabel") or target:IsA("TextButton") or target:IsA("TextBox") then
 			target.Text = data.characters or "Text"
 
+			-- Force TextScaled on as requested for responsive text
+			target.TextScaled = true
+
 			if data.fontSize then
-				target.TextSize = data.fontSize
+				-- Manually calculate the scaled font size dynamically based on the current screen's Y ratio
+				local scaledFontSize = math.round(data.fontSize * ratioY)
+				target.TextSize = math.max(1, scaledFontSize)
+			end
+
+			-- Clean up any existing constraint since we aren't using them anymore
+			local textConstraint = target:FindFirstChildOfClass("UITextSizeConstraint")
+			if textConstraint then
+				textConstraint:Destroy()
 			end
 
 			if data.fills and #data.fills > 0 and data.fills[1].type == "SOLID" then
@@ -238,8 +241,6 @@ local function ApplyFigmaData(target: GuiObject, data: any)
 			corner = Instance.new("UICorner")
 			corner.Parent = target
 		end
-
-		-- We can safely map CornerRadius as a ratio of the smallest scale
 		local safeMinSize = math.max(1, math.min(targetWidth, targetHeight))
 		corner.CornerRadius = UDim.new(data.cornerRadius / safeMinSize, 0)
 	else
@@ -259,22 +260,27 @@ local function ApplyFigmaData(target: GuiObject, data: any)
 			stroke.Parent = target
 		end
 
-		local figmaStrokeWeight = data.strokeWeight or 1
+		-- Map Figma border position to Roblox Enum
+		if data.borderStrokePosition then
+			local posStr = string.lower(data.borderStrokePosition)
+			if posStr == "inner" then
+				stroke.BorderStrokePosition = Enum.BorderStrokePosition.Inner
+			elseif posStr == "outer" then
+				stroke.BorderStrokePosition = Enum.BorderStrokePosition.Outer
+			elseif posStr == "center" then
+				stroke.BorderStrokePosition = Enum.BorderStrokePosition.Center
+			end
+		end
 
-		-- Enable responsive scaling for the UIStroke
+		local figmaStrokeWeight = data.strokeWeight or 1
 		stroke.StrokeSizingMode = Enum.StrokeSizingMode.ScaledSize
 
-		-- Determine the stroke mode and calculate the relative scale ratio
 		if data.type == "TEXT" and (target:IsA("TextLabel") or target:IsA("TextButton") or target:IsA("TextBox")) then
-			-- Contextual applies the stroke directly to text characters.
-			-- When ScaledSize is enabled on Contextual, Thickness is relative to TextSize.
 			stroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Contextual
-			local fontSize = data.fontSize or target.TextSize
+			local fontSize = data.fontSize or 14
 			local safeFontSize = math.max(1, fontSize)
 			stroke.Thickness = figmaStrokeWeight / safeFontSize
 		else
-			-- Border applies the stroke to the GUI's bounding box.
-			-- When ScaledSize is enabled on Border, Thickness is relative to minimum dimension (X or Y).
 			stroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
 			local safeMinSize = math.max(1, math.min(targetWidth, targetHeight))
 			stroke.Thickness = figmaStrokeWeight / safeMinSize
@@ -296,14 +302,12 @@ end
 --------------------------------------------------------------------------------
 -- 4. Safety & Processing Logic
 --------------------------------------------------------------------------------
-
 inputBox.FocusLost:Connect(function(enterPressed: boolean)
 	local jsonText = inputBox.Text
 	if jsonText == "" then
 		return
 	end
 
-	-- 4a. Validate JSON
 	local success, parsedData = pcall(function()
 		return HttpService:JSONDecode(jsonText)
 	end)
@@ -320,32 +324,23 @@ inputBox.FocusLost:Connect(function(enterPressed: boolean)
 
 	local figmaData = parsedData[1]
 
-	-- Validate Rotation
 	if figmaData.rotation and math.abs(figmaData.rotation) >= 1 then
 		warn("Figma Importer: Gui rotations not supported! Please set rotation to 0 in Figma and try again.")
 		return
 	end
 
-	-- 4b. Validate Selection
 	local selected = Selection:Get()
 	if #selected ~= 1 or not selected[1]:IsA("GuiObject") then
 		warn("Figma Importer: Please select exactly ONE GuiObject in your Explorer.")
 		return
 	end
 
-	-- Cast the instance strictly as a GuiObject
 	local target = selected[1] :: GuiObject
 
-	-- 4c. Undo/Redo Support Implementation
 	ChangeHistoryService:SetWaypoint("BeforeFigmaImport")
-
-	-- Apply properties
 	ApplyFigmaData(target, figmaData)
-
-	-- Finalize waypoint
 	ChangeHistoryService:SetWaypoint("AfterFigmaImport")
 
-	-- Clear input box for next use
 	inputBox.Text = ""
 	print("Figma properties successfully applied to " .. target.Name)
 end)

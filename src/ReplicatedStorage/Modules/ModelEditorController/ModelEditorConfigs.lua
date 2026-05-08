@@ -9,7 +9,7 @@ local Configs = {}
 Configs.CakeDecorator = {
 	GetModelFromPart = function(part)
 		local model = part:FindFirstAncestorWhichIsA("Model")
-		return if model and model ~= workspace then model else nil
+		return if model and workspace:FindFirstChild("ModelEditorModels"):IsAncestorOf(part) then model else nil
 	end,
 
 	IsValidModel = function(player, model)
@@ -26,7 +26,7 @@ Configs.CakeDecorator = {
 		TagsToDisableWhileMoving = nil,
 		MultiplayerEdit = false,
 
-		CanDiscard = function(model, mousePoint)
+		ModelInTrashGui = function(model, mousePoint)
 			local Player = Players.LocalPlayer
 			local DiscardGuiHitBox = Player.PlayerGui.CakeDecoratorGui.MainPanel.BackgroundElements.Background3
 
@@ -34,11 +34,7 @@ Configs.CakeDecorator = {
 		end,
 
 		Instances = function()
-			return {
-
-				GarbageGui = nil,
-				CameraPivot = workspace.CakeBuildPlatform, -- set by WorkshopTable --TODO instead make a function called GetCameraPivot() like GetBuildPlatform()
-			}
+			return {}
 		end,
 
 		CanPaint = function(part)
@@ -58,7 +54,7 @@ Configs.CakeDecorator = {
 		end,
 
 		GetBuildPlatform = function()
-			return workspace.CakeBuildPlatform
+			return workspace:WaitForChild("CakeDecorationArea"):WaitForChild("CakeBuildPlatform")
 		end,
 
 		IsSurface = function(placeOn)

@@ -9,27 +9,12 @@ return {
 		-- Asset Properties
 		Title = "Bases",
 		Assets = {
-			"SingleLayerCylinderBase",
-			"DoubleLayerCylinderBase",
-			"TripleLayerCylinderBase",
+			"CylinderCake1",
+			"CylinderCake2",
+			"CylinderCake3",
 		},
 	},
-	Paint = {
-		Type = "Paint",
-	},
-	Sprinkles = {
-		Type = "Sprinkles",
-	},
-	Frosting = {
-		Type = "Asset",
 
-		-- Asset Properties
-		Title = "Frostings",
-		Assets = {
-			"SphereFrosting",
-			"SwirlFrosting",
-		},
-	},
 	Decoration = {
 		Type = "Asset",
 
@@ -38,6 +23,24 @@ return {
 		Assets = {
 			"Cherry",
 			"RainbowFruit",
+			"Strawberry",
+			"Candle",
+			"Pillar",
+			"SlicedStrawberry",
+			"Swirl",
+			"Flower",
+			"Raspberry",
+			"Blueberry",
+			"Blackberry",
+			"Lemon",
+			"Lime",
+			"Orange",
+			"SphereFrosting",
+			"SwirlFrosting",
+			"Icing",
+			"AppleSlice",
+			"RoundKiwiSlice",
+			"CakeDrip",
 		},
 	},
 }

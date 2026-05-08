@@ -79,7 +79,11 @@ function MultiTouch.new()
 
 		local thumbstickFrame = GetThumbstickFrame()
 
-		if thumbstickFrame ~= nil and GuiUtils.PointInGui(thumbstickFrame, touch.Position) then
+		if
+			thumbstickFrame ~= nil
+			and GuiUtils.PointInGui(thumbstickFrame, touch.Position)
+			and thumbstickFrame.Visible
+		then
 			touchType = TouchType.Thumbstick
 		end
 

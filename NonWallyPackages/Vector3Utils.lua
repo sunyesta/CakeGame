@@ -311,4 +311,22 @@ function Vector3Utils.AngularDistance(vector1, vector2)
 	return math.acos(dotProduct)
 end
 
+function Vector3Utils.IsPointInBounds(point: Vector3, boundsCFrame: CFrame, boundsSize: Vector3): boolean
+	-- 1. Transform the world-space point into the local-space of the CFrame.
+	-- This effectively moves the 'origin' to the box's center and aligns the axes
+	-- with the box's rotation.
+	local relativePoint = boundsCFrame:PointToObjectSpace(point)
+
+	-- 2. Calculate the half-extents of the box.
+	-- Bounds check are done from the center, so we check if the point is within
+	-- +/- half of the size on each axis.
+	local halfSize = boundsSize / 2
+
+	-- 3. Perform the axis-aligned check in local space.
+	-- We check the absolute value of the relative coordinates.
+	return math.abs(relativePoint.X) <= halfSize.X
+		and math.abs(relativePoint.Y) <= halfSize.Y
+		and math.abs(relativePoint.Z) <= halfSize.Z
+end
+
 return Vector3Utils

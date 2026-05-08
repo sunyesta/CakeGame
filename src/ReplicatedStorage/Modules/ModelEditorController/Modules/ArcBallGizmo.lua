@@ -14,6 +14,7 @@ local Signal: any = require(Packages:WaitForChild("Signal"))
 local ClickDetectorClass: any = require(NonWallyPackages:WaitForChild("ClickDetector"))
 local MouseTouchClass: any = require(NonWallyPackages:WaitForChild("MouseTouch"))
 local Property: any = require(NonWallyPackages:WaitForChild("Property"))
+local ValueTester = require(NonWallyPackages.ValueTester)
 
 -- Type Definition
 export type ArcballGizmoType = {
@@ -45,7 +46,7 @@ local function GetAdorneeCFrame(adornee: PVInstance?): CFrame
 end
 
 -- Helper to safely get the top CFrame of our adornee (above bounding box considering pivot offsets)
-local function GetAdorneeTopCFrame(adornee: PVInstance?): CFrame
+local function GetAdorneeTopCFrame(adornee: PVInstance?, ballDistanceOffset): CFrame
 	if not adornee then
 		return CFrame.new()
 	end
@@ -58,14 +59,14 @@ local function GetAdorneeTopCFrame(adornee: PVInstance?): CFrame
 		local pivotToCenter = pivot:ToObjectSpace(centerCFrame)
 
 		-- localTopY finds the top of the bounding box relative to the pivot's local Y axis
-		local localTopY = pivotToCenter.Y + (size.Y / 2) + 1
+		local localTopY = pivotToCenter.Y + (size.Y / 2) + ballDistanceOffset
 		return pivot * CFrame.new(0, localTopY, 0)
 	elseif adornee:IsA("BasePart") then
 		-- Calculate the relative offset from the pivot to the center of the part
 		local pivotToCenter = pivot:ToObjectSpace(adornee.CFrame)
 
 		-- localTopY finds the top of the part relative to the pivot's local Y axis
-		local localTopY = pivotToCenter.Y + (adornee.Size.Y / 2) + 3
+		local localTopY = pivotToCenter.Y + (adornee.Size.Y / 2) + ballDistanceOffset
 		return pivot * CFrame.new(0, localTopY, 0)
 	end
 
@@ -98,6 +99,7 @@ function ArcballGizmo.new(ballTemplate: BasePart): ArcballGizmoType
 	self.Color = self._Trove:Add(Property.new(Color3.fromRGB(255, 255, 255)))
 	self.PivotOffset = self._Trove:Add(Property.new(CFrame.new()))
 	self.AdorneeSizeOverride = self._Trove:Add(Property.new(nil))
+	self.BallDistanceOffset = self._Trove:Add(Property.new(0.5))
 
 	-- Events
 	self.MouseButton1Down = self._Trove:Add(Signal.new())
@@ -128,6 +130,8 @@ function ArcballGizmo.new(ballTemplate: BasePart): ArcballGizmoType
 
 	-- High priority ClickDetector to ensure handles override background clicks
 	self.ClickDetector = self._Trove:Add(ClickDetectorClass.new(100))
+
+	-- This filter ensures the ClickDetector only reacts when the user is specifically hovering over the handle
 	self.ClickDetector:SetResultFilterFunction(function(result: RaycastResult)
 		return result.Instance == self._activeBall
 	end)
@@ -149,7 +153,7 @@ function ArcballGizmo:_getWorkingCFrame(): CFrame
 	if not adornee then
 		return CFrame.new()
 	end
-	return GetAdorneeTopCFrame(adornee) * self.PivotOffset:Get()
+	return GetAdorneeTopCFrame(adornee, self.BallDistanceOffset:Get()) * self.PivotOffset:Get()
 end
 
 function ArcballGizmo:_render()
@@ -190,21 +194,16 @@ function ArcballGizmo:_render()
 		self:_updatePositionsAndHover()
 	end)
 
-	-- Bind interaction clicks
-	self._adornmentsTrove:Connect(self._mouseTouch.LeftDown, function(pos: Vector2)
+	-- Bind interaction clicks using ClickDetector instead of manual Raycasting
+	self._adornmentsTrove:Connect(self.ClickDetector.LeftDown, function()
 		if not self._activeBall then
 			return
 		end
 
-		local raycastParams = RaycastParams.new()
-		raycastParams.FilterType = Enum.RaycastFilterType.Include
-		raycastParams.FilterDescendantsInstances = { self._activeBall }
-
-		local hitResult = self._mouseTouch:Raycast(raycastParams, 1000, pos)
-		if hitResult and hitResult.Instance == self._activeBall then
-			self._isHovering = true
-			self:_onMouseDown()
-		end
+		-- Since the ClickDetector's filter function checks for `self._activeBall`,
+		-- we already know it was hit!
+		self._isHovering = true
+		self:_onMouseDown()
 	end)
 end
 
@@ -295,12 +294,12 @@ function ArcballGizmo:_onMouseDown()
 	local handlePos = self:_getWorkingCFrame().Position
 	local currentRadius = (handlePos - self._dragStartCenter).Magnitude
 
-	-- Calculate the initial rotation vector
+	-- Calculate the initial rotation vector using the user's mouse ray
 	self._initialVector = self:_getVectorOnSphere(self._mouseTouch:GetRay(), self._dragStartCenter, currentRadius)
 
 	self.MouseButton1Down:Fire()
 
-	-- Track dragging
+	-- Track dragging using RenderStepped and MouseTouch rays
 	self._inputTrove:Connect(RunService.RenderStepped, function()
 		local currentRay = self._mouseTouch:GetRay()
 		local currentVector = self:_getVectorOnSphere(currentRay, self._dragStartCenter, currentRadius)
@@ -321,7 +320,7 @@ function ArcballGizmo:_onMouseDown()
 		self.MouseDrag:Fire(rotationDelta)
 	end)
 
-	-- Bind mouse up
+	-- Bind mouse up to end the drag
 	self._inputTrove:Connect(self._mouseTouch.LeftUp, function()
 		self:_onMouseUp()
 	end)

@@ -1,7 +1,11 @@
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local TableUtil = require(ReplicatedStorage.Packages.TableUtil)
 local TypeSerializer = {}
 
 function TypeSerializer.Serialize(val)
-	if type(val) == "string" then
+	if type(val) == "nil" then
+		return nil
+	elseif type(val) == "string" then
 		return val
 	elseif typeof(val) == "Vector3" then
 		return { X = val.X, Y = val.Y, Z = val.Z }
@@ -16,7 +20,9 @@ function TypeSerializer.Serialize(val)
 end
 
 function TypeSerializer.Deserialize(valType, val)
-	if valType == "string" then
+	if type(val) == "nil" then
+		return nil
+	elseif valType == "string" then
 		return val
 	elseif valType == "Vector3" then
 		return Vector3.new(val.X, val.Y, val.Z)
@@ -27,6 +33,26 @@ function TypeSerializer.Deserialize(valType, val)
 	else
 		error("Unsupported type " .. valType)
 	end
+end
+
+function TypeSerializer.SerializeList(list)
+	list = TableUtil.Copy(list)
+
+	for i, val in list do
+		list[i] = TypeSerializer.Serialize(val)
+	end
+
+	return list
+end
+
+function TypeSerializer.DeserializeList(valType, list)
+	list = TableUtil.Copy(list)
+
+	for i, val in list do
+		list[i] = TypeSerializer.Deserialize(valType, val)
+	end
+
+	return list
 end
 
 return TypeSerializer

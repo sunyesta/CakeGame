@@ -72,10 +72,21 @@ function VirtualCamera:Destroy()
 end
 
 function VirtualCamera:Observe(callback)
+	-- Track the current activation trove so we can destroy it when deactivated
+	local currentObserverTrove = nil
+
 	return self._IsActive:Observe(function(isActive)
+		-- If a trove already exists from a previous activation, destroy it!
+		-- This is what triggers your cleanup functions (like re-enabling controls)
+		if currentObserverTrove then
+			currentObserverTrove:Destroy()
+			currentObserverTrove = nil
+		end
+
 		if isActive then
-			local observerTrove = self._trove:Extend()
-			callback(observerTrove)
+			-- Create a new trove for this specific active duration
+			currentObserverTrove = self._trove:Extend()
+			callback(currentObserverTrove)
 		end
 	end)
 end

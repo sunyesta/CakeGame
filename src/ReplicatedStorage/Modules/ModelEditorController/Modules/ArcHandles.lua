@@ -16,6 +16,8 @@ local Property = require(NonWallyPackages:WaitForChild("Property"))
 
 -- Default size is now explicitly in studs
 local DEFAULT_HANDLE_SIZE_STUDS = 5
+local MIN_SCALE = 0.1
+local MAX_SCALE = 5
 
 local HandleSpaces = {
 	Local = "Local",
@@ -166,16 +168,10 @@ function ArcHandles.new(handleRingTemplate: BasePart): ArcHandlesType
 	self._Trove:Add(self.Adornee:Observe(function()
 		self:_render()
 	end))
-
 	self._Trove:Add(self.Axes:Observe(function()
 		self:_render()
 	end))
-
 	self._Trove:Add(self.Color:Observe(function()
-		self:_render()
-	end))
-
-	self._Trove:Add(self.AdorneeSizeOverride:Observe(function()
 		self:_render()
 	end))
 
@@ -240,79 +236,31 @@ function ArcHandles:_render()
 		self._adornmentsTrove:Add(handlePart)
 	end
 
-	-- INTEGRATION: Dynamically calculate encapsulating size based on Adornee/Override volume and off-center pivots
-	local function updateSizes()
-		local currentAdornee = self.Adornee:Get()
-		local override = self.AdorneeSizeOverride:Get()
-
-		local targetSizeInStuds = self.Size:Get()
-
-		if currentAdornee then
-			if typeof(override) == "Vector3" then
-				-- They passed a volumetric Size Override. Calculate corners from off-center pivot!
-				targetSizeInStuds = getEncapsulatingDiameter(currentAdornee, override)
-			elseif typeof(override) == "number" then
-				-- They passed a direct diameter number. Respect it.
-				targetSizeInStuds = override
-			else
-				-- No override given. Auto-encapsulate the current Adornee's actual size.
-				local realSize
-				if currentAdornee:IsA("Model") then
-					_, realSize = currentAdornee:GetBoundingBox()
-				elseif currentAdornee:IsA("BasePart") then
-					realSize = currentAdornee.Size
-				end
-
-				if realSize then
-					targetSizeInStuds = getEncapsulatingDiameter(currentAdornee, realSize)
-				end
-			end
-		end
-
-		local templateSize = self._handleTemplate.Size
-		local templateBaseSize = math.max(templateSize.X, templateSize.Y, templateSize.Z)
-		local scaleFactor = targetSizeInStuds / templateBaseSize
-		local scaleIndex = 0
-
-		for _, axis in ipairs(currentAxes) do
-			local part = self._activeHandles[axis]
-			if part then
-				part.Size = templateSize * (scaleFactor + (scaleIndex * 0.35))
-				scaleIndex += 1
-			end
-		end
-	end
-
-	self._adornmentsTrove:Add(self.Size:Observe(updateSizes))
-	self._adornmentsTrove:Add(self.AdorneeSizeOverride:Observe(updateSizes))
-
-	-- Run it immediately once to initialize
-	updateSizes()
-
+	-- FIX: Run dynamically every single frame rather than waiting for an explicit ping!
 	self._adornmentsTrove:Connect(RunService.RenderStepped, function()
 		self:_updatePositionsAndHover()
 	end)
 
-	self._adornmentsTrove:Connect(self._mouseTouch.LeftDown, function(pos: Vector2)
-		local raycastParams = RaycastParams.new()
-		raycastParams.FilterType = Enum.RaycastFilterType.Include
+	-- Detect clicks utilizing the custom ClickDetectorClass instead of manual _mouseTouch raycasting!
+	self._adornmentsTrove:Connect(self.ClickDetector.LeftDown, function(clickedInstance: Instance?)
+		local targetAxis = nil
 
-		local activeParts = {}
-		for _, part in pairs(self._activeHandles) do
-			table.insert(activeParts, part)
-		end
-		raycastParams.FilterDescendantsInstances = activeParts
-
-		local hitResult = self._mouseTouch:Raycast(raycastParams, 1000, pos)
-
-		if hitResult and hitResult.Instance then
+		-- If ClickDetector passes the hit instance, try to match it.
+		-- Otherwise, fall back to the currently hovered axis tracked by _updatePositionsAndHover.
+		if clickedInstance then
 			for axis, part in pairs(self._activeHandles) do
-				if part == hitResult.Instance then
-					self._hoveredAxis = axis
-					self:_onMouseDown(axis)
+				if part == clickedInstance then
+					targetAxis = axis
 					break
 				end
 			end
+		else
+			targetAxis = self._hoveredAxis
+		end
+
+		if targetAxis then
+			self._hoveredAxis = targetAxis
+			self:_onMouseDown(targetAxis)
 		end
 	end)
 end
@@ -322,7 +270,45 @@ function ArcHandles:_updatePositionsAndHover()
 		return
 	end
 
-	-- STEP 1: Update Positions of all handles using our Space-Aware CFrame
+	-- STEP 1: Dynamically calculate sizing dynamically every single frame (zero latency)
+	local currentAdornee = self.Adornee:Get()
+	local override = self.AdorneeSizeOverride:Get()
+	local targetSizeInStuds = self.Size:Get()
+
+	if currentAdornee then
+		if typeof(override) == "Vector3" then
+			targetSizeInStuds = getEncapsulatingDiameter(currentAdornee, override)
+		elseif typeof(override) == "number" then
+			targetSizeInStuds = override
+		else
+			local realSize
+			if currentAdornee:IsA("Model") then
+				_, realSize = currentAdornee:GetBoundingBox()
+			elseif currentAdornee:IsA("BasePart") then
+				realSize = currentAdornee.Size
+			end
+
+			if realSize then
+				targetSizeInStuds = getEncapsulatingDiameter(currentAdornee, realSize)
+			end
+		end
+	end
+
+	local templateSize = self._handleTemplate.Size
+	local templateBaseSize = math.max(templateSize.X, templateSize.Y, templateSize.Z)
+	local scaleFactor = targetSizeInStuds / templateBaseSize
+	local scaleIndex = 0
+
+	local currentAxes = self.Axes:Get()
+	for _, axis in ipairs(currentAxes) do
+		local part = self._activeHandles[axis]
+		if part then
+			part.Size = templateSize * (scaleFactor + (scaleIndex * 0.35))
+			scaleIndex += 1
+		end
+	end
+
+	-- STEP 2: Update Positions of all handles using our Space-Aware CFrame
 	local cf = self:_getWorkingCFrame()
 	for axis, part in pairs(self._activeHandles) do
 		local targetCf
@@ -338,7 +324,7 @@ function ArcHandles:_updatePositionsAndHover()
 		part:PivotTo(targetCf)
 	end
 
-	-- STEP 2: Detect mouse hovering via the ClickDetector's internal state
+	-- STEP 3: Detect mouse hovering via the ClickDetector's internal state
 	if self._draggingAxis then
 		return
 	end
@@ -355,7 +341,7 @@ function ArcHandles:_updatePositionsAndHover()
 		end
 	end
 
-	-- STEP 3: Handle Enter/Leave transitions and color updates
+	-- STEP 4: Handle Enter/Leave transitions and color updates
 	if newHoveredAxis ~= self._hoveredAxis then
 		local currentColor = self.Color:Get()
 

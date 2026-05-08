@@ -17,5 +17,7 @@ return {
 		GameVersion = Property.CreateCommProperty(PlayerComm, "GameVersion", ""),
 		PlayerLoaded = Property.CreatePlayerCommProperty(PlayerComm, "PlayerLoaded", false),
 		Inventory = Property.CreatePlayerCommProperty(PlayerComm, "Inventory", {}),
+		SavedPatterns = Property.CreatePlayerCommProperty(PlayerComm, "SavedPatterns", {}),
+		SavedColors = Property.CreatePlayerCommProperty(PlayerComm, "SavedColors", {}),
 	},
 }

@@ -151,9 +151,11 @@ if __name__ == "__main__":
 
     # 1. Define your list of files AND/OR directories here
     src_paths = [
-        r"src/ReplicatedStorage/Modules/ModelEditorController",
-        # r"C:\Users\Mary\Documents\roblox game dev\CakeGame\src\ReplicatedStorage\VSCodeStudioPlugins\SmoothieMoveTools2"
-        # r"C:\Users\Mary\Documents\roblox game dev\CakeGame\NonWallyPackages\Cinemachine"
+        #     r"src\ReplicatedStorage\Modules\ModelEditorController\Tools\PaintTool.lua",
+        #     r"C:\Users\Mary\Documents\roblox game dev\CakeGame\src\ReplicatedStorage\Modules\ModelEditorController\init.lua",
+        # r"C:\Users\Mary\Documents\roblox game dev\CakeGame\src\ReplicatedStorage\Modules\ModelEditorController\Modules\CustomMaterial",
+        # r"C:\Users\Mary\Documents\roblox game dev\CakeGame\src\ReplicatedStorage\Components\GUIs\CakeDecoratorGui\ColorTab.lua",
+        r"C:\Users\Mary\Documents\roblox game dev\CakeGame\NonWallyPackages\Cinemachine"
     ]
 
     # 2. Define your output file
@@ -162,9 +164,9 @@ if __name__ == "__main__":
     # 3. Define blacklist patterns (glob style)
     # Common examples: "*.log", ".git", "node_modules", "__pycache__"
     black_list = [
-        r"src/ReplicatedStorage/Modules/ModelEditorController/Modules",
-        r"C:\Users\Mary\Documents\roblox game dev\CakeGame\src\ReplicatedStorage\Controllers",
-        r"src\ReplicatedStorage\VSCodeStudioPlugins\SmoothieMoveTools2\Modules",
+        # r"src/ReplicatedStorage/Modules/ModelEditorController/Modules",
+        # r"C:\Users\Mary\Documents\roblox game dev\CakeGame\src\ReplicatedStorage\Controllers",
+        # r"src\ReplicatedStorage\VSCodeStudioPlugins\SmoothieMoveTools2\Modules",
     ]
 
     # Ensure output directory exists before running

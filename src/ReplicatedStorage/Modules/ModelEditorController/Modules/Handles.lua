@@ -21,12 +21,15 @@ local HandleSpaces = {
 
 -- Type Definition
 export type HandlesType = {
-	Adornee: any, -- Custom Property
-	Faces: any, -- Custom Property
-	Style: any, -- Custom Property
-	Color: any, -- Custom Property
+	Adornee: any,
+	Axes: any,
+	Faces: any,
+	Style: any,
+	Color: any,
 	HandleSpace: any,
-	AdorneeSizeOverride: any, -- Custom Property
+	AdorneeSizeOverride: any,
+	HandleDistance: any,
+	HandleScale: any,
 
 	MouseButton1Down: any,
 	MouseButton1Up: any,
@@ -46,9 +49,11 @@ Handles.HandleSpaces = HandleSpaces
 local function GetFaceCFrame(normal: Vector3): CFrame
 	if math.abs(normal.Y) == 1 then
 		-- Prevent lookAt from breaking when looking directly straight up/down
-		return CFrame.lookAt(Vector3.zero, -normal, Vector3.xAxis)
+		-- [FIXED]: Now looking at `normal` instead of `-normal`
+		return CFrame.lookAt(Vector3.zero, normal, Vector3.xAxis)
 	else
-		return CFrame.lookAt(Vector3.zero, -normal)
+		-- [FIXED]: Now looking at `normal` instead of `-normal`
+		return CFrame.lookAt(Vector3.zero, normal)
 	end
 end
 
@@ -84,6 +89,12 @@ function Handles.new(handlePartTemplate: BasePart): HandlesType
 
 	-- Instantiate our custom Properties
 	self.Style = self._Trove:Add(Property.new(Enum.HandlesStyle.Movement))
+
+	-- Updated Axes to use Vector3 directions
+	self.Axes = self._Trove:Add(
+		Property.new({ Vector3.xAxis, Vector3.yAxis, Vector3.zAxis, -Vector3.xAxis, -Vector3.yAxis, -Vector3.zAxis })
+	)
+
 	self.Faces = self._Trove:Add(
 		Property.new(
 			Faces.new(
@@ -99,7 +110,9 @@ function Handles.new(handlePartTemplate: BasePart): HandlesType
 	self.Adornee = self._Trove:Add(Property.new(nil))
 	self.Color = self._Trove:Add(Property.new(Color3.fromRGB(13, 105, 172))) -- Standard Studio Blue
 	self.HandleSpace = self._Trove:Add(Property.new(HandleSpaces.Local))
-	self.AdorneeSizeOverride = self._Trove:Add(Property.new(nil)) -- Added AdorneeSizeOverride
+	self.AdorneeSizeOverride = self._Trove:Add(Property.new(nil))
+	self.HandleDistance = self._Trove:Add(Property.new(0.5)) -- handle distance from the pivot
+	self.HandleScale = self._Trove:Add(Property.new(0.5)) -- scales the handle so its largest dimension matches the scale
 
 	-- Bind Properties to _render() automatically when they are changed via :Set()
 	if self.Adornee.Changed then
@@ -120,6 +133,12 @@ function Handles.new(handlePartTemplate: BasePart): HandlesType
 		end)
 	end
 
+	if self.Axes.Changed then
+		self._Trove:Connect(self.Axes.Changed, function()
+			self:_render()
+		end)
+	end
+
 	if self.Style.Changed then
 		self._Trove:Connect(self.Style.Changed, function()
 			self:_render()
@@ -128,6 +147,19 @@ function Handles.new(handlePartTemplate: BasePart): HandlesType
 
 	if self.AdorneeSizeOverride.Changed then
 		self._Trove:Connect(self.AdorneeSizeOverride.Changed, function()
+			self:_render()
+		end)
+	end
+
+	-- Hook up our new HandleDistance and HandleScale properties!
+	if self.HandleDistance.Changed then
+		self._Trove:Connect(self.HandleDistance.Changed, function()
+			self:_render()
+		end)
+	end
+
+	if self.HandleScale.Changed then
+		self._Trove:Connect(self.HandleScale.Changed, function()
 			self:_render()
 		end)
 	end
@@ -237,10 +269,26 @@ function Handles:_render()
 	end
 
 	local currentFaces = self.Faces:Get()
+	local currentAxes = self.Axes:Get()
+	local currentScale = self.HandleScale:Get()
+
+	-- Convert currentAxes array into a quick lookup dictionary for optimization
+	local activeAxes = {}
+	if currentAxes then
+		for _, vec in ipairs(currentAxes) do
+			activeAxes[vec] = true
+		end
+	end
 
 	for _, normalId in ipairs(Enum.NormalId:GetEnumItems()) do
-		-- Only render enabled faces
+		-- Only render if the face is enabled in the Faces property
 		if not currentFaces[normalId.Name] then
+			continue
+		end
+
+		-- Filter by Axes property: Only render if its corresponding directional Vector3 is enabled
+		local faceVector = Vector3.FromNormalId(normalId)
+		if not activeAxes[faceVector] then
 			continue
 		end
 
@@ -252,6 +300,15 @@ function Handles:_render()
 		handlePart.CanCollide = false
 		handlePart.CanQuery = true -- Required for Raycasting interactions!
 		handlePart.CastShadow = false
+
+		-- Apply HandleScale logic: Scale proportionally so the largest dimension equals `currentScale`
+		local templateSize = self._handleTemplate.Size
+		local maxDim = math.max(templateSize.X, templateSize.Y, templateSize.Z)
+		if maxDim > 0 then
+			local multiplier = currentScale / maxDim
+			handlePart.Size = templateSize * multiplier
+		end
+
 		handlePart.Parent = self._guiFolder
 
 		self._activeHandles[normalId] = handlePart
@@ -263,30 +320,16 @@ function Handles:_render()
 		self:_updatePositionsAndHover()
 	end)
 
-	-- 3. Bind interaction clicks via our MouseTouch to guarantee Mobile Support!
-	self._adornmentsTrove:Connect(self._mouseTouch.LeftDown, function(pos: Vector2)
-		-- We construct a RaycastParams to ONLY look for our active handle parts
-		local raycastParams = RaycastParams.new()
-		raycastParams.FilterType = Enum.RaycastFilterType.Include
-
-		local activeParts = {}
-		for _, part in pairs(self._activeHandles) do
-			table.insert(activeParts, part)
-		end
-		raycastParams.FilterDescendantsInstances = activeParts
-
-		-- Cast a ray exactly where the user tapped or clicked
-		local hitResult = self._mouseTouch:Raycast(raycastParams, 1000, pos)
-
-		if hitResult and hitResult.Instance then
-			-- Find which normalId this hit part corresponds to
-			for normalId, part in pairs(self._activeHandles) do
-				if part == hitResult.Instance then
-					-- Trigger visual hover update instantly for mobile feel
-					self._hoveredFace = normalId
-					self:_onMouseDown(normalId)
-					break
-				end
+	-- 3. Bind interaction clicks via our custom ClickDetector!
+	self._adornmentsTrove:Connect(self.ClickDetector.LeftDown, function(hitInstance: BasePart, hitResult: RaycastResult)
+		-- The ClickDetector has already filtered the hit results to only be our active handle parts!
+		-- Find which normalId this hit part corresponds to
+		for normalId, part in pairs(self._activeHandles) do
+			if part == hitInstance then
+				-- Trigger visual hover update instantly for mobile feel
+				self._hoveredFace = normalId
+				self:_onMouseDown(normalId)
+				break
 			end
 		end
 	end)
@@ -297,15 +340,20 @@ function Handles:_updatePositionsAndHover()
 		return
 	end
 
+	-- Get current distance modifier
+	local currentDistance = self.HandleDistance:Get()
+
 	-- STEP 1: Update Positions of all handles using our Space-Aware bounds!
 	local cf, size = self:_getWorkingBounds()
 	for normalId, part in pairs(self._activeHandles) do
 		local normal = Vector3.FromNormalId(normalId)
 		local baseCf = cf * GetFaceCFrame(normal)
-		local faceOffset = (size * normal).Magnitude / 2
 
-		-- Move the part to sit on the surface of the bounding box
-		part:PivotTo(baseCf * CFrame.new(0, 0, faceOffset))
+		-- Apply HandleDistance to the offset!
+		local faceOffset = ((size * normal).Magnitude / 2) + currentDistance
+
+		-- [FIXED]: Move the part out by `-faceOffset` (Negative Z) because the LookVector is now facing outwards!
+		part:PivotTo(baseCf * CFrame.new(0, 0, -faceOffset))
 	end
 
 	-- STEP 2: Detect mouse hovering via the ClickDetector's internal state
@@ -398,6 +446,7 @@ function Handles:_onMouseDown(face: Enum.NormalId)
 	if self._draggingFace then
 		return
 	end
+	print("handle down")
 	self._draggingFace = face
 
 	-- FIX: Cache the starting CFrame (Local or Global) so our distance calculation doesn't spin with the model!

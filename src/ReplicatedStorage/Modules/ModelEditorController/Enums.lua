@@ -17,6 +17,12 @@ Enums.Gizmos = {
 	Scale = "Scale",
 }
 
+Enums.TransformGizmoModes = {
+	ArcballRotation = "ArcballRotation",
+	Scale = "Scale",
+	YAxisMove = "YAxisMove",
+}
+
 Enums.MoveStatuses = {
 	Moved = "Moved",
 	InvalidPlacement = "InvalidPlacement",

@@ -2,6 +2,7 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Cameras = require(ReplicatedStorage.Common.Modules.Cameras)
 local WindShake = require(ReplicatedStorage.Packages.WindShake)
 local ClickDetector = require(ReplicatedStorage.NonWallyPackages.ClickDetector)
+local Cinemachine = require(ReplicatedStorage.NonWallyPackages.Cinemachine)
 
 local WIND_DIRECTION = Vector3.new(1, 0, 0.3)
 local WIND_SPEED = 5

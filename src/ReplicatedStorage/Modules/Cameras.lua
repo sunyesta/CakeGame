@@ -8,9 +8,12 @@ local ModelEditorController = require(ReplicatedStorage.Common.Modules.ModelEdit
 local PointVisualizer = require(ReplicatedStorage.NonWallyPackages.PointVisualizer)
 local ValueTester = require(ReplicatedStorage.NonWallyPackages.ValueTester)
 
--- fov = ValueTester.new("FOV", 25, 0, 100)
+Cinemachine:Start()
 
 local Player = Players.LocalPlayer
+
+local PlayerModule = require(Player.PlayerScripts:WaitForChild("PlayerModule"))
+local Controls = PlayerModule:GetControls()
 
 function GetBoundingBox(root: Instance): (CFrame, Vector3)
 	-- If it's a Model, use the built-in optimized engine method
@@ -119,31 +122,46 @@ function CakeCamera()
 		ScreenCenter = UDim2.fromScale(0.4, 0.6),
 		MouseLock = false,
 		ZoomLock = false,
+		Sensitivity = Vector2.new(0.005, 0.005),
 		-- YLimit = { Min = 0.1, Max = 1.0 },
 		-- FadeCharacter = false, -- The player isn't the focus, so disable this.
 	})
 
 	Cinemachine.Brain:Register(cakeCamera)
 
-	local CakeBuildPlatform = workspace.CakeBuildPlatform
-
+	local CakeBuildPlatform = workspace:WaitForChild("CakeDecorationArea"):WaitForChild("CakeBuildPlatform")
 	local ModelEditorModels = workspace:WaitForChild("ModelEditorModels")
-	ModelEditorController.WorkspaceChanged:Connect(function()
-		local boundingBox = GetBoundingBox(ModelEditorModels)
-		local yPos = math.round(boundingBox.Y)
-		cakeCamera.Follow = Vector3.new(CakeBuildPlatform.Position.X, yPos, CakeBuildPlatform.Position.Z)
-		-- PointVisualizer.new(cakeCamera.Follow)
-	end)
 
-	ModelEditorController.FreezeCamera:Observe(function(freezeCamera)
-		-- print(freezeCamera)
-		if freezeCamera then
-			cakeCamera.Body.RotationControlEnabled = false
-			cakeCamera.Body.ZoomControlEnabled = false
-		else
-			cakeCamera.Body.RotationControlEnabled = true
-			cakeCamera.Body.ZoomControlEnabled = true
+	print(cakeCamera._IsActive)
+	cakeCamera:Observe(function(activeTrove)
+		Controls:Disable()
+
+		activeTrove:Add(function()
+			print("Controls enabled")
+			Controls:Enable()
+		end)
+
+		local function OnWorkspaceChanged()
+			local boundingBox = GetBoundingBox(ModelEditorModels)
+			local yPos = math.round(boundingBox.Y)
+			cakeCamera.Follow =
+				Vector3.new(CakeBuildPlatform.Position.X, CakeBuildPlatform.Position.Y, CakeBuildPlatform.Position.Z)
+			-- PointVisualizer.new(cakeCamera.Follow)
 		end
+
+		OnWorkspaceChanged()
+		activeTrove:Add(ModelEditorController.WorkspaceChanged:Connect(OnWorkspaceChanged))
+
+		activeTrove:Add(ModelEditorController.WorkspaceChanged:Connect(OnWorkspaceChanged))
+		activeTrove:Add(ModelEditorController.FreezeCamera:Observe(function(freezeCamera)
+			if freezeCamera then
+				cakeCamera.Body.RotationControlEnabled = false
+				cakeCamera.Body.ZoomControlEnabled = false
+			else
+				cakeCamera.Body.RotationControlEnabled = true
+				cakeCamera.Body.ZoomControlEnabled = true
+			end
+		end))
 	end)
 
 	return cakeCamera

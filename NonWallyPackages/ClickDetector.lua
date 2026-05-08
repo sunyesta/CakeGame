@@ -50,6 +50,44 @@ CursorGui.Parent = PlayerGui
 
 -- Hide the native Roblox cursor completely
 UserInputService.MouseIconEnabled = false
+
+-- === UPDATED: Hide cursor dynamically based on input type ===
+local function UpdateInputMethod(lastInputType)
+	-- Don't change visibility if the Roblox Esc menu is open!
+	if GuiService.MenuIsOpen then
+		return
+	end
+
+	if lastInputType == Enum.UserInputType.Touch then
+		CursorGui.Enabled = false
+	elseif
+		lastInputType == Enum.UserInputType.MouseMovement
+		or lastInputType == Enum.UserInputType.MouseButton1
+		or lastInputType == Enum.UserInputType.MouseButton2
+		or lastInputType == Enum.UserInputType.MouseButton3
+	then
+		CursorGui.Enabled = true
+	end
+end
+
+-- Listen for input changes (supports switching between touch and mouse seamlessly)
+UserInputService.LastInputTypeChanged:Connect(UpdateInputMethod)
+
+-- Set the initial visibility state based on what they are using right now
+UpdateInputMethod(UserInputService:GetLastInputType())
+
+-- === NEW: Handle the Roblox Escape Menu ===
+-- We want the native mouse back when the player pauses the game!
+GuiService.MenuOpened:Connect(function()
+	CursorGui.Enabled = false
+	UserInputService.MouseIconEnabled = true
+end)
+
+GuiService.MenuClosed:Connect(function()
+	UserInputService.MouseIconEnabled = false
+	UpdateInputMethod(UserInputService:GetLastInputType())
+end)
+-- ========================================================
 -------------------------------------------------------------------------
 
 local ClickDetector = {}
@@ -219,6 +257,16 @@ end
 
 -- Main Update Loop
 RunService:BindToRenderStep("CustomCursorUpdate", Enum.RenderPriority.Input.Value, function(deltaTime)
+	-- === NEW: Skip custom logic and enforce hiding during gameplay ===
+	if GuiService.MenuIsOpen then
+		return -- Do nothing while the Esc menu is open
+	end
+
+	-- Force hide the native cursor every single frame!
+	-- This strictly prevents Roblox TextButtons or core UI from accidentally revealing it.
+	UserInputService.MouseIconEnabled = false
+	-- =================================================================
+
 	-- 1. Determine effective position (prioritize OverrideCursorPosition over actual mouse)
 	local effectivePos = ClickDetector.OverrideCursorPosition or MouseTouchGui:GetPosition()
 

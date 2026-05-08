@@ -1,3 +1,4 @@
+local GuiService = game:GetService("GuiService")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local UserInputService = game:GetService("UserInputService")
 
@@ -199,12 +200,18 @@ function MouseTouch:IsLeftDown()
 	return self._isMouseDown or self._isTouchDown
 end
 
-function MouseTouch:GetPosition()
+function MouseTouch:GetPosition(useScreenInset)
 	if UserInputService.TouchEnabled and not self._isTouchDown then
 		return UserInputService:GetMouseLocation()
 	end
+
+	local inset = 0
+	if useScreenInset then
+		inset = GuiService:GetGuiInset().Y
+	end
+
 	-- Fallback to current mouse location if _lastMouseLocation is somehow nil
-	return self._lastMouseLocation or UserInputService:GetMouseLocation()
+	return self._lastMouseLocation or UserInputService:GetMouseLocation() + Vector2.new(0, inset)
 end
 
 function MouseTouch:GetRay(overridePos: Vector2?): Ray

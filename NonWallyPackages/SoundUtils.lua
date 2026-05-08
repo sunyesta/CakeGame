@@ -23,4 +23,10 @@ function SoundUtils.PlaySoundFromID(soundID, parent)
 	return trove
 end
 
+function SoundUtils.CloneSound(sound)
+	local newSound = sound:Clone()
+	newSound.Parent = sound.Parent
+	return newSound
+end
+
 return SoundUtils

@@ -77,7 +77,7 @@ function Property.ReadOnly(property)
 end
 
 -- Returns a NormalProp. If defaultValue == Property.READ_ONLY then property is readonly
-function Property.BindToAttribute(instance, attributeName, defaultValue)
+function Property.BindToInstanceAttribute(instance, attributeName, defaultValue)
 	local isReadOnly = (defaultValue == Property.READ_ONLY)
 
 	local initialValue
@@ -120,7 +120,7 @@ function Property.BindToAttribute(instance, attributeName, defaultValue)
 end
 
 -- Returns a NormalProp bound to a specific property of an Instance
-function Property.BindToProperty(instance, instancePropertyName, defaultValue)
+function Property.BindToInstanceProperty(instance, instancePropertyName, defaultValue)
 	local isReadOnly = (defaultValue == Property.READ_ONLY)
 
 	local initialValue
@@ -178,13 +178,14 @@ function Property.BindToCommProperty(commProperty)
 
 		-- 2. Create the property with the now-guaranteed value
 		local prop = Property.new(commProperty:Get())
+		local propReadOnly = Property.ReadOnly(prop)
 
 		-- 3. Set up the observation for future changes
 		prop._trove:Add(commProperty.Changed:Connect(function(val)
 			prop:Set(val)
 		end))
 
-		resolve(prop)
+		resolve(propReadOnly)
 	end):expect()
 end
 

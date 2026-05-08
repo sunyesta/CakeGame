@@ -7,6 +7,7 @@ local Input = require(ReplicatedStorage.Packages.Input)
 local MouseTouch = require(ReplicatedStorage.NonWallyPackages.MouseTouch)
 local Assert = require(ReplicatedStorage.NonWallyPackages.Assert)
 local Signal = require(ReplicatedStorage.Packages.Signal)
+local Enums = require(script.Parent.Enums)
 
 local Props = {}
 
@@ -15,7 +16,6 @@ Props.State = Property.new()
 Props.ActiveGizmo = Property.new()
 Props.ShowGizmos = Property.new(false)
 Props.SelectedModel = Property.new()
-Props.IsDiscarding = Property.new(false)
 Props.LockCamera = Property.new(false)
 Props.SelectedMaterial = Property.new()
 Props.ConfigName = Property.new()
@@ -44,6 +44,10 @@ Props.MouseTouchGui = MouseTouch.new({
 	Unprocessed = true,
 })
 Props.WorkspaceChanged = Signal.new()
+Props.RedOverlayGuiAdornee = Property.new(nil)
+Props.SnapOn = Property.new(true)
+
+Props.TransformGizmoMode = Property.new(Enums.TransformGizmoModes.YAxisMove)
 
 function Props.AssertStatePromiseNotRunning()
 	Assert(

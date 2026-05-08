@@ -16,29 +16,40 @@ export type View3DFrame = typeof(setmetatable(
 		Instance: ViewportFrame,
 		Camera: Camera,
 		SpinSpeed: any,
+		CameraTiltAngle: any,
+		FOV: any,
+		FlipCamera: any, -- Added FlipCamera to the type definition
 		_CurrentAngle: number,
 		_TargetCenter: Vector3,
 		_TargetDistance: number,
+		_ModelMaxExtent: number,
 	},
 	View3DFrame
 ))
 
 --[[
-	Creates a new View3DFrame instance.
-	@param parentFrame The GuiObject where the ViewportFrame will be parented.
+    Creates a new View3DFrame instance.
+    @param parentFrame The GuiObject where the ViewportFrame will be parented.
 ]]
 function View3DFrame.new(parentFrame: GuiObject): View3DFrame
 	local self = setmetatable({}, View3DFrame)
 	self._Trove = Trove.new()
 
 	-- Setup ViewportFrame
-	self.Instance = self._Trove:Add(Instance.new("ViewportFrame"))
+	self.Instance = self._Trove:Add(Instance.new("ViewportFrame")) :: ViewportFrame
 	self.Instance.Size = UDim2.fromScale(1, 1) -- Fills the parent frame by default
 	self.Instance.BackgroundTransparency = 1
 	self.Instance.Parent = parentFrame
+	self.Instance.LightColor = Color3.new(0, 0, 0)
+	self.Instance.Ambient = Color3.fromRGB(300, 300, 300)
+
+	self.CameraTiltAngle = Property.new(20) -- 0-90 camera tilt. 90 is viewing the model from overhead. 0 is viewing the model from the front
+	self.FOV = Property.new(20)
+	self.FlipCamera = Property.new(false) -- false makes camera face the look vector, true makes it face the negative look vector
 
 	-- Setup Camera
 	self.Camera = self._Trove:Add(Instance.new("Camera"))
+	self.Camera.Parent = self.Instance
 	self.Instance.CurrentCamera = self.Camera
 
 	-- Custom State
@@ -46,43 +57,70 @@ function View3DFrame.new(parentFrame: GuiObject): View3DFrame
 	self._CurrentAngle = 0
 	self._TargetCenter = Vector3.zero
 	self._TargetDistance = 10
+	self._ModelMaxExtent = 0 -- Default to 0 until a model is focused
 
 	-- Bind spinning logic to RunService using Trove to ensure cleanup
 	self._Trove:Connect(RunService.RenderStepped, function(dt: number)
 		local speed = self.SpinSpeed:Get()
+
+		-- Only increment the angle if we are actually spinning
 		if speed > 0 or speed < 0 then
 			self._CurrentAngle += speed * dt
-			self:_UpdateCameraPosition()
 		end
+
+		-- Always update camera position so changes to CameraTiltAngle and FOV
+		-- apply immediately even if SpinSpeed is 0
+		self:_UpdateCameraPosition()
 	end)
 
 	return self
 end
 
 --[[
-	Cleans up the ViewportFrame, Camera, and RunService connections.
+    Cleans up the ViewportFrame, Camera, and RunService connections.
 ]]
 function View3DFrame:Destroy()
 	self._Trove:Destroy()
 end
 
 --[[
-	Internal method to reposition the camera based on the current angle, distance, and center.
+    Internal method to reposition the camera based on the current angle, distance, center, tilt, and FOV.
 ]]
 function View3DFrame:_UpdateCameraPosition()
-	-- Create an offset CFrame rotated by our current angle
-	local offset = CFrame.Angles(0, self._CurrentAngle, 0) * CFrame.new(0, 0, self._TargetDistance)
+	-- 1. Apply the current FOV property to the Camera
+	local currentFOV = self.FOV:Get()
+	self.Camera.FieldOfView = currentFOV
 
-	-- Position the camera at the target center + offset, looking at the target center
-	self.Camera.CFrame = CFrame.new(self._TargetCenter + offset.Position, self._TargetCenter)
+	-- 2. Dynamically calculate the required distance based on the current FOV
+	if self._ModelMaxExtent > 0 then
+		local fovRad = math.rad(currentFOV)
+		-- Multiply by 1.2 to maintain the 20% visual padding
+		self._TargetDistance = (self._ModelMaxExtent / 2) / math.tan(fovRad / 2) * 1.2
+	end
+
+	-- Get the tilt angle and convert it to radians
+	local tiltAngle = self.CameraTiltAngle:Get()
+	local tiltRad = math.rad(tiltAngle)
+
+	-- Determine the base rotation angle based on whether the camera should be flipped
+	local angle = self._CurrentAngle
+	if self.FlipCamera:Get() then
+		angle += math.pi -- Add 180 degrees in radians to view from the back
+	end
+
+	-- Calculate the Camera CFrame strictly through CFrame matrix multiplication
+	-- This avoids the CFrame.new(pos, lookAt) singularity when looking straight down
+	self.Camera.CFrame = CFrame.new(self._TargetCenter)
+		* CFrame.Angles(0, angle + math.pi, 0)
+		* CFrame.Angles(-tiltRad, 0, 0)
+		* CFrame.new(0, 0, self._TargetDistance)
 end
 
 --[[
-	Calculates the bounding box of all BaseParts and frames the camera perfectly.
+    Calculates the bounding box of all BaseParts and frames the camera perfectly.
 ]]
 function View3DFrame:FocusOnBoundingBox()
 	-- We use GetDescendants() instead of GetChildren() to safely grab parts
-	-- even if they are nested inside a Model.
 	local baseparts = TableUtil.Filter(self.Instance:GetDescendants(), function(inst: Instance)
 		return inst:IsA("BasePart")
 	end)
@@ -132,18 +170,11 @@ function View3DFrame:FocusOnBoundingBox()
 	local center = (minBounds + maxBounds) / 2
 	local extents = maxBounds - minBounds
 
-	-- Find the largest dimension of the model to ensure it fits entirely in view
-	local maxExtent = math.max(extents.X, extents.Y, extents.Z)
-
-	-- Calculate the required distance using Trigonometry and the Camera's Field of View
-	local fov = math.rad(self.Camera.FieldOfView)
-
-	-- We multiply by 1.2 to add a 20% visual padding so the model doesn't touch the screen edges
-	local distance = (maxExtent / 2) / math.tan(fov / 2) * 1.2
+	-- Find and store the largest dimension of the model to ensure it fits entirely in view
+	self._ModelMaxExtent = math.max(extents.X, extents.Y, extents.Z)
 
 	-- Update state and force a camera update
 	self._TargetCenter = center
-	self._TargetDistance = distance
 	self._CurrentAngle = 0
 
 	self:_UpdateCameraPosition()

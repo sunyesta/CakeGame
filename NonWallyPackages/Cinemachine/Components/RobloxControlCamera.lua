@@ -20,6 +20,9 @@ function RobloxControlCamera.new(config)
 	self.RotatePlayerWithShiftlock = if config.RotatePlayerWithShiftlock == nil
 		then true
 		else config.RotatePlayerWithShiftlock
+	self.Damping = Vector3.new(0, 0, 0.1)
+	self.FocusDamping = 0
+	self.ZoomSpeed = 2
 
 	-- We track the vector we added last frame so we can subtract it this frame.
 	-- This allows us to treat self.FollowOffset as the source of truth,

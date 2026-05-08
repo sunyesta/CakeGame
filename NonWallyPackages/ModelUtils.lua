@@ -120,4 +120,42 @@ function ModelUtils.ConvertFolderToModel(folder: Folder, primaryPart: BasePart?)
 	return newModel
 end
 
+function ModelUtils.IsModelBoundsFullyInBounds(model: Model, boundsCFrame: CFrame, boundsSize: Vector3): boolean
+	-- 1. Get the bounding box of the model
+	local modelCFrame, modelSize = model:GetBoundingBox()
+
+	-- 2. Calculate half-sizes for the model and the boundary
+	local mhx, mhy, mhz = modelSize.X / 2, modelSize.Y / 2, modelSize.Z / 2
+	local bhx, bhy, bhz = boundsSize.X / 2, boundsSize.Y / 2, boundsSize.Z / 2
+
+	-- 3. Define the 8 corner offsets of the model's bounding box
+	local corners = {
+		Vector3.new(mhx, mhy, mhz),
+		Vector3.new(mhx, mhy, -mhz),
+		Vector3.new(mhx, -mhy, mhz),
+		Vector3.new(mhx, -mhy, -mhz),
+		Vector3.new(-mhx, mhy, mhz),
+		Vector3.new(-mhx, mhy, -mhz),
+		Vector3.new(-mhx, -mhy, mhz),
+		Vector3.new(-mhx, -mhy, -mhz),
+	}
+
+	-- 4. Check each corner
+	for _, offset in corners do
+		-- Convert the local corner offset to World Space
+		local worldCorner = modelCFrame:PointToWorldSpace(offset)
+
+		-- Convert the World Space corner to the Object Space of the target bounds
+		-- This makes the math simple: the bounds are now centered at 0,0,0
+		local relativeCorner = boundsCFrame:PointToObjectSpace(worldCorner)
+
+		-- Check if the point is outside the boundary on any axis
+		if math.abs(relativeCorner.X) > bhx or math.abs(relativeCorner.Y) > bhy or math.abs(relativeCorner.Z) > bhz then
+			return false -- At least one corner is outside
+		end
+	end
+
+	return true -- All corners passed the check
+end
+
 return ModelUtils

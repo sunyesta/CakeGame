@@ -24,6 +24,14 @@ local ModelEditorConfigs = require(script.ModelEditorConfigs)
 local Assert = require(ReplicatedStorage.NonWallyPackages.Assert)
 local GetAssetByName = require(ReplicatedStorage.Common.Modules.GetAssetByName)
 local SelectionTool = require(script.Tools.SelectionTool)
+local DeleteObjectGuiSetup = require(script.Modules.DeleteObjectGuiSetup)
+local ValueTester = require(ReplicatedStorage.NonWallyPackages.ValueTester)
+local SoundUtils = require(ReplicatedStorage.NonWallyPackages.SoundUtils)
+local SoundEffects = require(script.SoundEffects)
+local LayeredTexture = require(script.Modules.LayeredTexture)
+local Input = require(ReplicatedStorage.Packages.Input)
+
+local Keyboard = Input.Keyboard.new()
 
 local Player = Players.LocalPlayer
 
@@ -38,7 +46,6 @@ function ModelEditorController.Start(configName)
 
 		local instances = config.Client.Instances()
 		Props.Config.BuildPlatform = config.Client.GetBuildPlatform()
-		Props.Config.CameraPivot = RequiredValue(instances.CameraPivot)
 
 		Props.Config.Funcs = {}
 
@@ -47,7 +54,7 @@ function ModelEditorController.Start(configName)
 		Props.Config.Funcs.GetModelFromPart = RequiredValue(config.GetModelFromPart)
 		Props.Config.Funcs.CanPaint = RequiredValue(config.Client.CanPaint)
 		Props.Config.Funcs.CanPlace = DefaultValue(config.CanPlace, SimpleFuncs.True())
-		Props.Config.Funcs.CanDiscard = DefaultValue(config.Client.CanDiscard, SimpleFuncs.False())
+		Props.Config.Funcs.ModelInTrashGui = DefaultValue(config.Client.ModelInTrashGui, SimpleFuncs.False())
 		Props.Config.Funcs.GetLoadData = DefaultValue(config.Client.GetLoadData, SimpleFuncs.Nil())
 		Props.Config.Funcs.SaveData = DefaultValue(config.Client.SaveData, SimpleFuncs.Nil())
 		Props.Config.Funcs.IsSurface = DefaultValue(config.Client.IsSurface, SimpleFuncs.True())
@@ -72,7 +79,6 @@ function ModelEditorController.Start(configName)
 	Props.RunningStatePromise = nil
 	Props.ActiveGizmo:Set(Enums.Gizmos.Transform)
 	Props.SelectedMaterial:Set(nil)
-	Props.IsDiscarding:Set(false)
 	Props.LockCamera:Set(false)
 	Props.SelectedModel:Set(nil)
 
@@ -107,12 +113,20 @@ function ModelEditorController.Start(configName)
 			end
 		end
 	end))
+
+	ModelEditorController.SetupMaterialListener()
 end
 
 function ModelEditorController.Stop()
 	if Props.Active:Get() then
 		ModelEditorController.Save()
 		Props.ActiveTrove:Clean()
+
+		-- FIX: Explicitly clear states when stopping so they don't carry over
+		-- to the next session. This prevents assertion errors and lingering selections!
+		Props.State:Set(false)
+		Props.SelectedModel:Set(nil)
+		Props.SelectedMaterial:Set(nil)
 	else
 		error("Model Editor Controller already stopped")
 	end
@@ -120,6 +134,14 @@ end
 
 function ModelEditorController.StartIdleMode()
 	Props.AssertStatePromiseNotRunning()
+
+	-- FIX: Prevent "State is already idle" crash when reopening the GUI.
+	-- If the state carried over from the previous session (because Property ignores nil),
+	-- we forcefully reset it here so the assertion passes and idle tools initialize cleanly.
+	if Props.State:Get() == Enums.States.Idle then
+		Props.State:Set(false)
+	end
+
 	assert(Props.State:Get() ~= Enums.States.Idle, "State is already idle")
 
 	local toolTrove = Props.ActiveTrove:Extend()
@@ -168,7 +190,10 @@ function ModelEditorController.StartIdleMode()
 		if decorModel == Props.SelectedModel:Get() then
 			Highlight.Parent = nil
 		else
-			Highlight.Parent = decorModel
+			if Highlight.Parent ~= decorModel then
+				Highlight.Parent = decorModel
+				SoundEffects.HoverEnter:Play()
+			end
 		end
 	end))
 
@@ -183,6 +208,8 @@ function ModelEditorController.StartIdleMode()
 		local part = modelClickDetector:GetBasePart()
 
 		if part then
+			print("got part")
+			SoundEffects.Grab:Play()
 			Props.FreezeCamera:Set(true)
 			mouseDownTrove:Add(function()
 				if Props.State:Get() == Enums.States.Idle then
@@ -202,10 +229,14 @@ function ModelEditorController.StartIdleMode()
 			tempDrag:Destroy()
 
 			mouseDownTrove:Add(Props.MouseTouch.Moved:Connect(function()
-				Props.SelectedModel:Set(model)
-				MoveTool.Activate(model, mouseOffset):finally(function()
-					ModelEditorController.StartIdleMode()
-				end)
+				if Keyboard:IsKeyDown(Enum.KeyCode.C) then
+					ModelEditorController.PlaceDuplicate(model)
+				else
+					Props.SelectedModel:Set(model)
+					MoveTool.Activate(model, mouseOffset):finally(function()
+						ModelEditorController.StartIdleMode()
+					end)
+				end
 			end))
 		else
 			local result = Props.MouseTouch:Raycast(ClickDetector.RaycastParams)
@@ -242,17 +273,20 @@ function ModelEditorController.StartEyedropperMode()
 		end)
 end
 
-function ModelEditorController._PlaceModel(newModel)
+-- NEW: added keepRotation argument and originalWeldedPart argument
+function ModelEditorController._PlaceModel(newModel, keepRotation, symmetryCount, originalWeldedPart)
 	return Promise.new(function(resolve)
 		Props.AssertStatePromiseNotRunning()
 
 		-- Create base model
-
 		newModel:SetAttribute("IsLocal", true)
 		newModel.Parent = Props.Instances.ModelsFolder
 		newModel.Name = HttpService:GenerateGUID(false)
 
-		-- Radial Symmetry Cloning Logic!
+		-- Grab the rotation of the clone before we move it
+		local currentRotation = newModel:GetPivot().Rotation
+
+		-- Radial Symmetry Cloning Logic
 		local counts = Props.RadialSymmetryCount:Get()
 		if counts and (counts.X > 1 or counts.Y > 1 or counts.Z > 1) then
 			local groupId = HttpService:GenerateGUID(false)
@@ -280,19 +314,39 @@ function ModelEditorController._PlaceModel(newModel)
 			end
 		end
 
+		-- NEW: Calculate a controlled spawn distance
+		local mouseRay = Props.MouseTouch:GetRay()
 		local result = Props.MouseTouch:Raycast(ClickDetector.RaycastParams)
 		local cframe
-		if result then
+
+		-- CONFIG: The maximum distance away from the camera a model is allowed to spawn
+		local DEFAULT_SPAWN_DISTANCE = 8.5
+
+		-- If we hit a surface AND it's reasonably close, spawn it directly on that surface
+		if result and (result.Position - Props.CurrentCamera.CFrame.Position).Magnitude <= DEFAULT_SPAWN_DISTANCE then
 			cframe = CFrame.new(result.Position)
 		else
-			local mouseRay = Props.MouseTouch:GetRay()
-			cframe = CFrame.new(mouseRay.Origin + mouseRay.Direction.Unit)
+			-- If we hit the skybox OR the hit was extremely far away, spawn it comfortably in front of the camera.
+			cframe = CFrame.new(mouseRay.Origin + (mouseRay.Direction.Unit * DEFAULT_SPAWN_DISTANCE))
 		end
+
+		-- NEW: Re-apply the current rotation if we want to preserve it!
+		if keepRotation then
+			cframe = cframe * currentRotation
+		end
+
+		-- PivotTo smoothly teleports the model using its PrimaryPart
 		newModel:PivotTo(cframe)
 
-		MoveTool.Activate(newModel, Vector2.zero, true):finally(function()
+		Props.SelectedModel:Set(newModel)
+		Props.RadialSymmetryCount:Set(symmetryCount or Vector3.new(1, 1, 1))
+
+		-- Pass the originalWeldedPart to correctly recalculate relative rotation during duplication
+		MoveTool.Activate(newModel, Vector2.zero, not keepRotation, originalWeldedPart):finally(function()
 			if newModel.Parent then
 				Props.SelectedModel:Set(newModel)
+			else
+				Props.SelectedModel:Set(nil)
 			end
 			ModelEditorController.StartIdleMode()
 			resolve()
@@ -303,7 +357,9 @@ end
 function ModelEditorController.PlaceDuplicate(model)
 	-- Update the state properties to match the model we're duplicating
 	local totalCounts = model:GetAttribute("SymmetryTotal") or Vector3.new(1, 1, 1)
-	Props.RadialSymmetryCount:Set(totalCounts)
+
+	-- 🐛 BUG FIX: Grab the part the original model is currently welded to BEFORE we clone it and break the welds.
+	local originalWeldedPart = ModelEditorUtils.GetWeldedPart(model)
 
 	local newModel = model:Clone()
 
@@ -313,18 +369,17 @@ function ModelEditorController.PlaceDuplicate(model)
 	newModel:SetAttribute("SymmetryTotal", nil)
 
 	ModelEditorUtils.BreakWeld(newModel)
-	return ModelEditorController._PlaceModel(newModel)
+
+	-- Pass originalWeldedPart so it maintains the correct rotation offset
+	return ModelEditorController._PlaceModel(newModel, true, totalCounts, originalWeldedPart)
 end
+
 function ModelEditorController.PlaceModel(assetName)
-	local refModel = GetAssetByName(assetName)
-	assert(
-		refModel.PrimaryPart,
-		"ModelEditorUtils: Asset '" .. assetName .. "' is missing a PrimaryPart! Please set it in Studio."
-	)
-	local newModel = Props.ActiveTrove:Add(refModel:Clone())
+	local newModel = Props.ActiveTrove:Add(ModelEditorUtils.CreateModel(assetName))
 	newModel.PrimaryPart.Anchored = false
 
-	return ModelEditorController._PlaceModel(newModel)
+	-- Keep original behavior for dragging out new assets (no custom rotation kept)
+	return ModelEditorController._PlaceModel(newModel, false, false, nil)
 end
 
 function ModelEditorController.Undo()
@@ -340,7 +395,7 @@ end
 
 function ModelEditorController.SelectMaterialFromPart(part)
 	Assert(ModelEditorUtils.CanPaintInst(part), "can't paint", part)
-	Props.SelectedMaterial:Set(require(ReplicatedStorage.Common.Modules.CustomMaterial).new(part))
+	Props.SelectedMaterial:Set(LayeredTexture.Build(part))
 end
 
 function ModelEditorController.GetDataWithoutSaving()
@@ -396,10 +451,14 @@ function ModelEditorController._GetInstances()
 
 	local ViewPortFrame = ModelEditorCoreGui:WaitForChild("ViewportFrame")
 	ViewPortFrame.CurrentCamera = Props.CurrentCamera
+	ViewPortFrame.LightColor = Color3.new(0, 0, 0)
+	ViewPortFrame.Ambient = Color3.fromRGB(300, 300, 300)
 
 	local ScaleGizmo = ModelEditorCoreGui:WaitForChild("ScaleGizmo")
 	local TransformGizmoBallGui = ModelEditorCoreGuis:WaitForChild("TransformGizmoBallGui")
 	TransformGizmoBallGui.Enabled = true
+
+	local DeleteObjectHighlight = ModelEditorCoreGuis:WaitForChild("DeleteObjectHighlight")
 
 	return {
 		ViewPortFrame = ViewPortFrame,
@@ -407,7 +466,8 @@ function ModelEditorController._GetInstances()
 		TransformGizmoBallGui = TransformGizmoBallGui,
 		TransformGizmo = TransformGizmo,
 		ModelsFolder = ModelsFolder,
-		InvalidModelHighlight = InvalidModelHighlight,
+		InvalidModelHighlight = InvalidModelHighlight :: Highlight,
+		DeleteObjectHighlight = DeleteObjectHighlight,
 	}
 end
 
@@ -420,10 +480,96 @@ function ModelEditorController._VerifyModels()
 	return true
 end
 
+function ModelEditorController.SetupMaterialListener()
+	local matTrove = nil
+
+	Props.ActiveTrove:Add(Props.SelectedMaterial:Observe(function(activeMaterial)
+		-- Clean up the previous material observer if we select a new part
+		if matTrove then
+			matTrove:Clean()
+			matTrove = nil
+		end
+
+		if not activeMaterial then
+			return
+		end
+
+		matTrove = Props.ActiveTrove:Add(Trove.new())
+
+		-- NEW: Guarantee we destroy the activeMaterial OOP instance when a new part is selected
+		-- This prevents a memory leak since `SelectMaterialFromPart` constructs a new instance!
+		matTrove:Add(function()
+			activeMaterial:Destroy()
+		end)
+
+		local activePart = activeMaterial:GetBasePart()
+		if not activePart then
+			return
+		end
+
+		local activeModel = Props.Config.Funcs.GetModelFromPart(activePart)
+		if not activeModel then
+			return
+		end
+
+		-- Get the relative path from the Model to this specific BasePart
+		local partPath = InstanceUtils.GetPath(activeModel, activePart)
+
+		-- Helper function to apply a material action to all symmetrical counterparts
+		local function applyToClones(action)
+			local clones = ModelEditorUtils.GetSymmetryClones(activeModel)
+			for _, clone in clones do
+				local clonePart = InstanceUtils.GetInstFromPath(clone, partPath)
+				if clonePart then
+					-- Build a temporary object on the clone to fire its internal Property Observers
+					local cloneMat = LayeredTexture.Build(clonePart)
+					action(cloneMat)
+					cloneMat:Destroy() -- Clean up instantly so we don't leak objects on every property change
+				end
+			end
+		end
+
+		-- Sync Texture Layers (Color & IDs) utilizing the new .Layers property
+		matTrove:Add(activeMaterial.Layers:Observe(function(layers)
+			if layers then
+				applyToClones(function(cloneMat)
+					cloneMat.Layers:Set(layers)
+				end)
+			end
+		end))
+
+		-- Sync Texture Scale utilizing the new .Scale property
+		matTrove:Add(activeMaterial.Scale:Observe(function(scale)
+			if scale then
+				applyToClones(function(cloneMat)
+					cloneMat.Scale:Set(scale)
+				end)
+			end
+		end))
+
+		-- Sync Texture Horizontal Offset (U)
+		matTrove:Add(activeMaterial.OffsetStudsU:Observe(function(offsetU)
+			if offsetU then
+				applyToClones(function(cloneMat)
+					cloneMat.OffsetStudsU:Set(offsetU)
+				end)
+			end
+		end))
+
+		-- Sync Texture Vertical Offset (V)
+		matTrove:Add(activeMaterial.OffsetStudsV:Observe(function(offsetV)
+			if offsetV then
+				applyToClones(function(cloneMat)
+					cloneMat.OffsetStudsV:Set(offsetV)
+				end)
+			end
+		end))
+	end))
+end
+
 ModelEditorController.Active = Props.Active
 ModelEditorController.State = Props.State
 ModelEditorController.SelectedModel = Props.SelectedModel
-ModelEditorController.IsDiscarding = Props.IsDiscarding
 ModelEditorController.SelectedMaterial = Props.SelectedMaterial
 ModelEditorController.ConfigName = Props.ConfigName
 ModelEditorController.LockCamera = Props.LockCamera
@@ -434,6 +580,8 @@ ModelEditorController.FreezeCamera = Props.FreezeCamera
 ModelEditorController.CursorIcons = MouseIcons
 ModelEditorController.Enums = Enums
 ModelEditorController.ActiveGizmo = Props.ActiveGizmo
+ModelEditorController.TransformGizmoMode = Props.TransformGizmoMode
+ModelEditorController.SnapOn = Props.SnapOn
 
 Props.Instances = ModelEditorController.Instances
 

@@ -26,7 +26,7 @@ function serializeNode(node) {
 		"fills",
 		"strokes",
 		"strokeWeight",
-		"strokeAlign",
+		"strokeAlign", // Native Figma property for stroke position
 		"cornerRadius",
 		"cornerSmoothing",
 		"characters",
@@ -68,6 +68,18 @@ function serializeNode(node) {
 				// Some properties like 'fills' can be completely empty or symbol-linked,
 				// stringifying them handles the raw data structure gracefully.
 				obj[prop] = node[prop];
+
+				// Create a custom property specifically for border stroke position
+				// translating Figma's UPPERCASE API formats to lowercase terminology
+				if (prop === "strokeAlign") {
+					const positionMap = {
+						INSIDE: "inner",
+						OUTSIDE: "outer",
+						CENTER: "center",
+					};
+					obj.borderStrokePosition =
+						positionMap[node.strokeAlign] || node.strokeAlign;
+				}
 			}
 		} catch (e) {
 			// Figma throws errors on certain getter properties if they don't apply

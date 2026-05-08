@@ -202,8 +202,8 @@ function Trackball:SetupCleanup()
 			self:RestoreTransparency(self._lastFadeTarget)
 		end
 
-		-- Ensure mouse is unlocked when component is destroyed
-		if UserInputService.MouseBehavior == Enum.MouseBehavior.LockCenter then
+		-- Ensure mouse is fully unlocked when component is destroyed
+		if UserInputService.MouseBehavior ~= Enum.MouseBehavior.Default then
 			UserInputService.MouseBehavior = Enum.MouseBehavior.Default
 		end
 	end)
@@ -361,10 +361,27 @@ function Trackball:Mutate(vcam, state, dt)
 	local isFullyZoomed = self.TargetDistance <= (self.MinDistance + 0.1)
 
 	-- Determine if mouse should be locked based on configs
-	-- IMPLEMENTATION: Now factors in self.ZoomLock!
 	local shouldLock = self.MouseLock or (self.ZoomLock and isFullyZoomed)
+	local isOrbiting = UserInputService:IsMouseButtonPressed(Enum.UserInputType.MouseButton2)
 
-	-- ADDED: Wrap Keyboard Rotation with check
+	local targetBehavior = Enum.MouseBehavior.Default
+
+	if shouldLock then
+		targetBehavior = Enum.MouseBehavior.LockCenter
+	elseif isOrbiting then
+		targetBehavior = Enum.MouseBehavior.LockCurrentPosition
+	end
+
+	-- Only update the MouseBehavior if it's different.
+	-- Constantly setting it every frame causes OS cursor desyncs in Roblox.
+	if UserInputService.MouseBehavior ~= targetBehavior then
+		UserInputService.MouseBehavior = targetBehavior
+
+		-- Discard the delta on the frame the mouse changes state to prevent sudden camera jerks
+		UserInputService:GetMouseDelta()
+	end
+
+	-- Wrap Keyboard and Mouse Rotation with checks
 	if self.RotationControlEnabled then
 		if UserInputService:IsKeyDown(Enum.KeyCode.Left) then
 			self.TargetYaw = self.TargetYaw + (KEYBOARD_ROTATION_SPEED * dt)
@@ -372,29 +389,8 @@ function Trackball:Mutate(vcam, state, dt)
 		if UserInputService:IsKeyDown(Enum.KeyCode.Right) then
 			self.TargetYaw = self.TargetYaw - (KEYBOARD_ROTATION_SPEED * dt)
 		end
-	end
 
-	if shouldLock then
-		-- First Person / Locked Mode
-		UserInputService.MouseBehavior = Enum.MouseBehavior.LockCenter
-
-		-- ADDED: Wrap Mouse Rotation with check
-		if self.RotationControlEnabled then
-			local delta = UserInputService:GetMouseDelta()
-			self.TargetYaw = self.TargetYaw - (delta.X * self.Sensitivity.X)
-			self.TargetPitch =
-				math.clamp(self.TargetPitch - (delta.Y * self.Sensitivity.Y), self.YLimit.Min, self.YLimit.Max)
-		end
-	else
-		-- Orbit Mode
-		local isOrbiting = UserInputService:IsMouseButtonPressed(Enum.UserInputType.MouseButton2)
-
-		if not isOrbiting and UserInputService.MouseBehavior == Enum.MouseBehavior.LockCenter then
-			UserInputService.MouseBehavior = Enum.MouseBehavior.Default
-		end
-
-		-- ADDED: Wrap Orbiting Mouse Rotation with check
-		if isOrbiting and self.RotationControlEnabled then
+		if shouldLock or isOrbiting then
 			local delta = UserInputService:GetMouseDelta()
 			self.TargetYaw = self.TargetYaw - (delta.X * self.Sensitivity.X)
 			self.TargetPitch =
