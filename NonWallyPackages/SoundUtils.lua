@@ -1,3 +1,4 @@
+local Debris = game:GetService("Debris")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Trove = require(ReplicatedStorage.Packages.Trove)
 local SoundUtils = {}
@@ -27,6 +28,20 @@ function SoundUtils.CloneSound(sound)
 	local newSound = sound:Clone()
 	newSound.Parent = sound.Parent
 	return newSound
+end
+
+function SoundUtils.PlaySoundOnce(sound: Sound, parent)
+	if not sound then
+		return
+	end
+
+	-- 1. Create a clone to allow overlapping
+	local soundClone = sound:Clone()
+
+	-- 2. Parent the clone
+	soundClone.Parent = parent or sound.Parent or game:GetService("SoundService")
+	soundClone.PlayOnRemove = true
+	soundClone:Destroy()
 end
 
 return SoundUtils

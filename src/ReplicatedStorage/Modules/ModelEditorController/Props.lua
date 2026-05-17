@@ -46,6 +46,7 @@ Props.MouseTouchGui = MouseTouch.new({
 Props.WorkspaceChanged = Signal.new()
 Props.RedOverlayGuiAdornee = Property.new(nil)
 Props.SnapOn = Property.new(true)
+Props.BoundsPart = Property.new(nil)
 
 Props.TransformGizmoMode = Property.new(Enums.TransformGizmoModes.YAxisMove)
 

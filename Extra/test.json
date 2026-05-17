@@ -1,62 +1,104 @@
-[
-    {
-        "id": "143:7",
-        "name": "Rectangle 97",
-        "type": "RECTANGLE",
-        "x": 908,
-        "y": 239,
-        "width": 39,
-        "height": 39,
-        "rotation": 0,
-        "layoutAlign": "INHERIT",
-        "layoutGrow": 0,
-        "opacity": 1,
-        "blendMode": "PASS_THROUGH",
-        "isMask": false,
-        "visible": true,
-        "locked": false,
-        "fills": [
-            {
-                "type": "SOLID",
-                "visible": true,
-                "opacity": 1,
-                "blendMode": "NORMAL",
-                "color": {
-                    "r": 0.9921568632125854,
-                    "g": 0.9882352948188782,
-                    "b": 0.9921568632125854
-                },
-                "boundVariables": {}
-            }
-        ],
-        "strokes": [
-            {
-                "type": "SOLID",
-                "visible": true,
-                "opacity": 1,
-                "blendMode": "NORMAL",
-                "color": {
-                    "r": 0.8784313797950745,
-                    "g": 0.2705882489681244,
-                    "b": 0.5372549295425415
-                },
-                "boundVariables": {}
-            }
-        ],
-        "strokeWeight": 3,
-        "strokeAlign": "INSIDE",
-        "borderStrokePosition": "inner",
-        "cornerRadius": 100,
-        "cornerSmoothing": 0,
-        "effects": [],
-        "exportSettings": [],
-        "constraints": {
-            "horizontal": "MIN",
-            "vertical": "MIN"
-        },
-        "dashPattern": [],
-        "fillStyleId": "",
-        "strokeStyleId": "",
-        "effectStyleId": ""
+--- SELECTION 1 ---
+Name: Part_2_2_0
+Class: MeshPart
+Path: Workspace.Map.Part_2_2_0
+
+HIERARCHY: [MeshPart
+] Part_2_2_0
+  Properties:
+    • Anchored: true
+    • Archivable: true
+    • AssemblyAngularVelocity: 0,
+0,
+0
+    • AssemblyCenterOfMass: -737.258056640625,
+109.01351928710938,
+1596.122...
+    • AssemblyLinearVelocity: 0,
+0,
+0
+    • AssemblyMass: inf
+    • AssemblyRootPart: Part_2_2_0
+    • AudioCanCollide: true
+    • BackSurface: Enum.SurfaceType.Smooth
+    • BottomSurface: Enum.SurfaceType.Smooth
+    • BrickColor: Shamrock
+    • CFrame: -734.890686,
+107.726982,
+1595.94482,
+1,
+0,
+1.12...
+    • CanCollide: true
+    • CanQuery: true
+    • CanTouch: true
+    • Capabilities: 
+    • CastShadow: true
+    • CenterOfMass: -2.3673861026763916,
+1.2865389585494995,
+0.1776...
+    • ClassName: MeshPart
+    • CollisionFidelity: Enum.CollisionFidelity.Default
+    • CollisionGroup: Default
+    • Color: 0.392157,
+0.603922,
+0.317647
+    • CurrentPhysicalProperties: 0.699999988,
+0.300000012,
+0.5,
+1,
+1,
+0.300000012
+    • CustomPhysicalProperties: nil
+    • DoubleSided: false
+    • EnableFluidForces: true
+    • ExtentsCFrame: -734.890686,
+107.726776,
+1595.94482,
+1,
+0,
+1.12...
+    • ExtentsSize: 160,
+22.109989166259766,
+160
+    • FluidFidelity: Enum.FluidFidelity.Automatic
+    • FrontSurface: Enum.SurfaceType.Smooth
+    • LeftSurface: Enum.SurfaceType.Smooth
+    • Locked: false
+    • Mass: 251013.375
+    • Massless: false
+    • Material: Enum.Material.Plastic
+    • MaterialVariant: Grass
+    • MeshContent: Content{SourceType=Uri, Uri=rbxassetid: //794000...
+    • MeshId: rbxassetid: //79400012322100
+    • MeshSize: 160,
+    22.11039924621582,
+    160
+    • Name: Part_2_2_0
+    • Parent: Map
+    • PivotOffset: -4.81335449,
+    -16.1412945,
+    0.384643555,
+    1,
+    -1.99...
+    • Reflectance: 0
+    • RenderFidelity: Enum.RenderFidelity.Automatic
+    • ResizeIncrement: 1
+    • ResizeableFaces: Right, Top, Back, Left, Bottom, Front
+    • RightSurface: Enum.SurfaceType.Smooth
+    • RootPriority: 0
+    • Rotation: 0,
+    0,
+    0
+    • Sandboxed: false
+    • Size: 160,
+    22.11039924621582,
+    160
+    • TextureContent: Content{SourceType=None
     }
-]
+    • TextureID: 
+    • TopSurface: Enum.SurfaceType.Smooth
+    • Transparency: 0
+
+------------------------------
+

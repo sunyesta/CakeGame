@@ -158,4 +158,8 @@ function ModelUtils.IsModelBoundsFullyInBounds(model: Model, boundsCFrame: CFram
 	return true -- All corners passed the check
 end
 
+function ModelUtils.ConvertToolToModel(tool: Tool)
+	-- write this function. it should return the model and delete the tool. the tool's handle should be the model's primary part.
+end
+
 return ModelUtils

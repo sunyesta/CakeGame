@@ -1,3 +1,4 @@
+local HttpService = game:GetService("HttpService")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local Assert = require(ReplicatedStorage.NonWallyPackages.Assert)
@@ -28,11 +29,9 @@ function ModelEditorServerSafeUtils.RequireWeld(model: Model)
 end
 
 function ModelEditorServerSafeUtils.SetWeldTarget(model: Model, otherPart: BasePart)
-	Assert(
-		otherPart and (otherPart.Parent == workspace or workspace:IsAncestorOf(otherPart.Parent)),
-		otherPart,
-		"is invalid"
-	)
+	-- Update the Assert to only check if it's a valid BasePart.
+	-- We removed the Workspace check so we can build tools in memory!
+	Assert(otherPart and otherPart:IsA("BasePart"), otherPart, "is invalid or not a BasePart")
 
 	local weld = ModelEditorServerSafeUtils.RequireWeld(model)
 	local oldEnabled = weld.Enabled
@@ -98,6 +97,12 @@ function ModelEditorServerSafeUtils.Save(
 )
 	local modelDataList = {}
 
+	-- Get the bounding box of the build platform to find its center CFrame and Size
+	local platformCFrame, platformSize = buildPlatform.CFrame, buildPlatform.Size
+
+	-- Shift the CFrame up by half the height (Y size) to get the center of the top surface
+	local topSurfaceCFrame = platformCFrame * CFrame.new(0, platformSize.Y / 2, 0)
+
 	for _, model in folder:GetChildren() do
 		local weldTo = ModelEditorServerSafeUtils.GetWeldedPart(model)
 		local symData = model:GetAttribute("SymmetryData")
@@ -109,7 +114,8 @@ function ModelEditorServerSafeUtils.Save(
 			WeldToPath = if weldTo and weldTo:IsDescendantOf(folder)
 				then InstanceUtils.GetPath(folder, weldTo)
 				else nil,
-			CFrameOffset = Serializer.Serialize(buildPlatform:GetPivot():ToObjectSpace(model:GetPivot())),
+			-- Calculate offset relative to the TOP surface, not the pivot center
+			CFrameOffset = Serializer.Serialize(topSurfaceCFrame:ToObjectSpace(model:GetPivot())),
 			Scale = model:GetScale(),
 
 			-- Call the client injection function if it exists
@@ -123,7 +129,7 @@ function ModelEditorServerSafeUtils.Save(
 		table.insert(modelDataList, modelData)
 	end
 
-	return modelDataList
+	return HttpService:JSONEncode(modelDataList)
 end
 
 -- We pass `applyMaterialsCallback` so the client can apply textures while the server safely ignores them.
@@ -135,6 +141,14 @@ function ModelEditorServerSafeUtils.Load(
 )
 	local models = {}
 	local createdModelsMap = {}
+
+	data = HttpService:JSONDecode(data)
+
+	-- Get the bounding box of the build platform to find its center CFrame and Size
+	local platformCFrame, platformSize = buildPlatform.CFrame, buildPlatform.Size
+
+	-- Shift the CFrame up by half the height (Y size) to get the center of the top surface
+	local topSurfaceCFrame = platformCFrame * CFrame.new(0, platformSize.Y / 2, 0)
 
 	for _, modelData in data do
 		local model = ModelEditorServerSafeUtils.CreateModel(modelData.AssetName)
@@ -153,7 +167,9 @@ function ModelEditorServerSafeUtils.Load(
 		end
 
 		local deserializedCFrame = Serializer.Deserialize("CFrame", modelData.CFrameOffset)
-		model:PivotTo(buildPlatform:GetPivot():ToWorldSpace(deserializedCFrame))
+
+		-- Apply the saved CFrame offset based on the TOP surface of the new build platform
+		model:PivotTo(topSurfaceCFrame:ToWorldSpace(deserializedCFrame))
 
 		LayeredTexture.LoadGroup(model, modelData.Materials)
 

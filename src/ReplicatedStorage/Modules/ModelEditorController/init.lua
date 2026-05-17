@@ -73,8 +73,6 @@ function ModelEditorController.Start(configName)
 	assert(configName and ModelEditorConfigs[configName], tostring(configName) .. " is an unknown config name")
 	setConfig(ModelEditorConfigs[configName])
 
-	ModelEditorController.Load()
-
 	Props.State:Set(nil)
 	Props.RunningStatePromise = nil
 	Props.ActiveGizmo:Set(Enums.Gizmos.Transform)
@@ -361,7 +359,7 @@ function ModelEditorController.PlaceDuplicate(model)
 	-- 🐛 BUG FIX: Grab the part the original model is currently welded to BEFORE we clone it and break the welds.
 	local originalWeldedPart = ModelEditorUtils.GetWeldedPart(model)
 
-	local newModel = model:Clone()
+	local newModel = Props.ActiveTrove:Add(model:Clone())
 
 	-- Strip existing symmetry data so _PlaceModel handles assigning a fresh symmetry group
 	newModel:SetAttribute("SymmetricalTo", nil)
@@ -410,7 +408,7 @@ function ModelEditorController.Save()
 end
 
 function ModelEditorController.Load(loadData)
-	loadData = loadData or Props.Config.Funcs.GetLoadData()
+	loadData = loadData
 	if loadData then
 		local models = ModelEditorUtils.Load(Props.Config.BuildPlatform, Props.Instances.ModelsFolder, loadData)
 		for _, model in models do
@@ -582,6 +580,9 @@ ModelEditorController.Enums = Enums
 ModelEditorController.ActiveGizmo = Props.ActiveGizmo
 ModelEditorController.TransformGizmoMode = Props.TransformGizmoMode
 ModelEditorController.SnapOn = Props.SnapOn
+
+-- settable properties
+ModelEditorController.BoundsPart = Props.BoundsPart
 
 Props.Instances = ModelEditorController.Instances
 

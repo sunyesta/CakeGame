@@ -54,7 +54,7 @@ Configs.CakeDecorator = {
 		end,
 
 		GetBuildPlatform = function()
-			return workspace:WaitForChild("CakeDecorationArea"):WaitForChild("CakeBuildPlatform")
+			return workspace:WaitForChild("CakeDecoratorArea"):WaitForChild("CakeBuildPlatform")
 		end,
 
 		IsSurface = function(placeOn)

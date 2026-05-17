@@ -29,7 +29,7 @@ def export_all_files_to_json(target_directory, output_file):
 
 if __name__ == "__main__":
     # --- CONFIGURATION ---
-    directory_to_scan = r"C:\Users\Mary\Downloads\Spore Sounds\WAV extracted-20260410T020449Z-3-001"  # Scans the current folder and all subfolders
+    directory_to_scan = r"C:\Program Files (x86)\Steam\steamapps\common\Creatures Village"  # Scans the current folder and all subfolders
     output_json_name = r"./Extra/out.txt"
     # ---------------------
 

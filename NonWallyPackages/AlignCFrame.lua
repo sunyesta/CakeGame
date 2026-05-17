@@ -78,17 +78,17 @@ function AlignCFrame.new(parent: BasePart, attachment0: Attachment, attachment1:
 			alignPosition.Parent = parent
 			alignOrientation.Parent = parent
 
-			activeTrove:Add(RunService.Stepped:Connect(function()
-				if attachment0 and attachment1 then
-					-- Calculate target CFrame for the parent part
-					-- Parent.CFrame * attachment0.CFrame = attachment1.WorldCFrame
-					-- Parent.CFrame = attachment1.WorldCFrame * attachment0.CFrame:Inverse()
+			-- activeTrove:Add(RunService.Stepped:Connect(function()
+			-- 	if attachment0 and attachment1 then
+			-- 		-- Calculate target CFrame for the parent part
+			-- 		-- Parent.CFrame * attachment0.CFrame = attachment1.WorldCFrame
+			-- 		-- Parent.CFrame = attachment1.WorldCFrame * attachment0.CFrame:Inverse()
 
-					-- Apply PivotOffset to get the target pivot location
-					local targetCFrame = attachment1.WorldCFrame * attachment0.CFrame:Inverse()
-					parent:PivotTo(targetCFrame * parent.PivotOffset)
-				end
-			end))
+			-- 		-- Apply PivotOffset to get the target pivot location
+			-- 		local targetCFrame = attachment1.WorldCFrame * attachment0.CFrame:Inverse()
+			-- 		parent:PivotTo(targetCFrame * parent.PivotOffset)
+			-- 	end
+			-- end))
 		else
 			alignPosition.Parent = nil
 			alignOrientation.Parent = nil

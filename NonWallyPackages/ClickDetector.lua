@@ -9,6 +9,8 @@ local Property = require(ReplicatedStorage.NonWallyPackages.Property)
 local Signal = require(ReplicatedStorage.Packages.Signal)
 local Trove = require(ReplicatedStorage.Packages.Trove)
 local TableUtil = require(ReplicatedStorage.Packages.TableUtil)
+-- === NEW: Require GuiUtils for thumbstick collision math ===
+local GuiUtils = require(ReplicatedStorage.NonWallyPackages.GuiUtils)
 
 -- Require the MouseTouch class
 local MouseTouchClass = require(ReplicatedStorage.NonWallyPackages.MouseTouch)
@@ -29,6 +31,8 @@ local MouseTouchGui = MouseTouchClass.new({
 local Player = Players.LocalPlayer
 local PlayerGui = Player:WaitForChild("PlayerGui")
 local RobloxMouse = Player:GetMouse()
+-- === NEW: Require PlayerModule to interact with the thumbstick controls ===
+local PlayerModule = require(Player:WaitForChild("PlayerScripts"):WaitForChild("PlayerModule"))
 
 -------------------------------------------------------------------------
 -- Custom Cursor UI Setup
@@ -51,9 +55,8 @@ CursorGui.Parent = PlayerGui
 -- Hide the native Roblox cursor completely
 UserInputService.MouseIconEnabled = false
 
--- === UPDATED: Hide cursor dynamically based on input type ===
+-- Hide cursor dynamically based on input type
 local function UpdateInputMethod(lastInputType)
-	-- Don't change visibility if the Roblox Esc menu is open!
 	if GuiService.MenuIsOpen then
 		return
 	end
@@ -70,14 +73,9 @@ local function UpdateInputMethod(lastInputType)
 	end
 end
 
--- Listen for input changes (supports switching between touch and mouse seamlessly)
 UserInputService.LastInputTypeChanged:Connect(UpdateInputMethod)
-
--- Set the initial visibility state based on what they are using right now
 UpdateInputMethod(UserInputService:GetLastInputType())
 
--- === NEW: Handle the Roblox Escape Menu ===
--- We want the native mouse back when the player pauses the game!
 GuiService.MenuOpened:Connect(function()
 	CursorGui.Enabled = false
 	UserInputService.MouseIconEnabled = true
@@ -108,7 +106,6 @@ ClickDetector._IsValid = true
 
 function ClickDetector._DefaultRaycastFunction(raycastParams, distance)
 	return function()
-		-- Fallback to override position if set
 		local effectivePos = ClickDetector.OverrideCursorPosition
 		return MouseTouch:Raycast(raycastParams, distance, effectivePos)
 	end
@@ -156,7 +153,6 @@ function ClickDetector:SetResultFilterFunction(callback)
 end
 
 function ClickDetector:GetBasePart(ignoreOverlappingDetectors, overridePos)
-	-- Determine effective position for this specific call
 	local effectivePos = overridePos or ClickDetector.OverrideCursorPosition
 
 	if ignoreOverlappingDetectors then
@@ -168,12 +164,10 @@ function ClickDetector:GetBasePart(ignoreOverlappingDetectors, overridePos)
 	end
 end
 
--- Abstracted out the cursor changing logic so this strictly returns the 3D target
 function ClickDetector._GetTopClickDetector(overridePos)
 	local effectivePos = overridePos or ClickDetector.OverrideCursorPosition
 	local found = nil
 
-	-- Pass the effective position to the raycast
 	local result = MouseTouch:Raycast(ClickDetector.RaycastParams, 99999, effectivePos)
 
 	if result then
@@ -187,7 +181,6 @@ function ClickDetector._GetTopClickDetector(overridePos)
 			end
 		end
 	else
-		-- Make sure we clear the hovering part if raycast hits nothing
 		for _, clickDetector in pairs(ClickDetector._All) do
 			clickDetector._HoveringPart:Set(nil)
 		end
@@ -200,10 +193,30 @@ function ClickDetector.GetResultDistanceFromPlayer(result)
 	return (result.Position - Player.Character:GetPivot().Position).Magnitude
 end
 
--- Adjusted to toggle our Custom Cursor GUI instead of the native mouse
 function ClickDetector:ToggleCursorVisibility(toggle)
 	CursorGui.Enabled = toggle
 end
+
+-- === NEW: Helper functions to cancel thumbstick inputs dynamically ===
+local function CancelThumbstick()
+	if PlayerModule and PlayerModule.controls then
+		-- Disabling and quickly re-enabling forces the active controller
+		-- to drop its current touch, neutralizing the movement input!
+		PlayerModule.controls:Disable()
+		PlayerModule.controls:Enable()
+	end
+end
+
+local function IsPointInThumbstick(pos)
+	if PlayerModule and PlayerModule.controls and PlayerModule.controls.activeController then
+		local thumbstickFrame = PlayerModule.controls.activeController.thumbstickFrame
+		if thumbstickFrame and thumbstickFrame.Visible then
+			return GuiUtils.PointInGui(thumbstickFrame, pos)
+		end
+	end
+	return false
+end
+-- ======================================================================
 
 function ClickDetector:CreatePropForHoveringObserveOverlapping()
 	local trove = self._Trove:Extend()
@@ -212,18 +225,21 @@ function ClickDetector:CreatePropForHoveringObserveOverlapping()
 
 	local lastMouseDownPart = nil
 	trove:Add(MouseTouch.LeftDown:Connect(function(pos)
-		-- Calculate the position taking into account any overrides
 		local effectivePos = ClickDetector.OverrideCursorPosition or pos
 
-		local clickDetector, result = self:GetBasePart(true, effectivePos) --TODO fix
+		local clickDetector, result = self:GetBasePart(true, effectivePos)
 		if clickDetector then
+			-- === NEW: Prevent thumbstick from taking over if we hit a ClickDetector ===
+			if IsPointInThumbstick(effectivePos) then
+				CancelThumbstick()
+			end
+
 			clickDetector.LeftDown:Fire(result.Instance, result)
 			lastMouseDownPart = result.Instance
 		end
 	end))
 
 	trove:Add(MouseTouch.LeftUp:Connect(function(pos)
-		-- Calculate the position taking into account any overrides
 		local effectivePos = ClickDetector.OverrideCursorPosition or pos
 
 		local clickDetector, result = self:GetBasePart(true, effectivePos)
@@ -239,14 +255,11 @@ function ClickDetector:CreatePropForHoveringObserveOverlapping()
 	return isHovering
 end
 
--- Helper to detect if the mouse is over an interactive 2D GUI
 local function IsHoveringOverGuiButton(mousePos)
 	local guisAtPosition = PlayerGui:GetGuiObjectsAtPosition(mousePos.X, mousePos.Y - GuiService:GetGuiInset().Y)
 
 	for _, gui in ipairs(guisAtPosition) do
-		-- Check if the GUI is a button, is visible, and is active
 		if gui.Visible and not gui:IsDescendantOf(CursorGui) then
-			-- Check if the GUI is a button OR if it has Active set to true
 			if gui:IsA("GuiButton") or gui.Active then
 				return true
 			end
@@ -257,57 +270,48 @@ end
 
 -- Main Update Loop
 RunService:BindToRenderStep("CustomCursorUpdate", Enum.RenderPriority.Input.Value, function(deltaTime)
-	-- === NEW: Skip custom logic and enforce hiding during gameplay ===
 	if GuiService.MenuIsOpen then
-		return -- Do nothing while the Esc menu is open
+		return
 	end
 
-	-- Force hide the native cursor every single frame!
-	-- This strictly prevents Roblox TextButtons or core UI from accidentally revealing it.
 	UserInputService.MouseIconEnabled = false
-	-- =================================================================
 
-	-- 1. Determine effective position (prioritize OverrideCursorPosition over actual mouse)
 	local effectivePos = ClickDetector.OverrideCursorPosition or MouseTouchGui:GetPosition()
-
-	-- 2. Lock our Custom Cursor to the effective position
 	CursorImage.Position = UDim2.fromOffset(effectivePos.X, effectivePos.Y)
 
-	-- 3. Check 3D environment using effective position
 	local foundClickDetector, result = ClickDetector._GetTopClickDetector(effectivePos)
-
-	-- 4. Check 2D environment using effective position
 	local isHoveringGui = IsHoveringOverGuiButton(effectivePos)
 
-	-- 5. Determine priority for which icon to display
 	local displayIcon = ClickDetector.DefaultIcon
 
 	if ClickDetector.OverrideIcon then
 		displayIcon = ClickDetector.OverrideIcon
 	elseif isHoveringGui then
-		displayIcon = ClickDetector.ButtonIcon -- Mouse is over a 2D GuiButton
+		displayIcon = ClickDetector.ButtonIcon
 	elseif foundClickDetector then
-		displayIcon = foundClickDetector.MouseIcon -- Mouse is over a 3D ClickDetector part
+		displayIcon = foundClickDetector.MouseIcon
 	end
 
-	-- 6. Apply the icon to our custom ImageLabel
 	CursorImage.Image = displayIcon
 end)
 
 local lastMouseDownPart = nil
 MouseTouch.LeftDown:Connect(function(pos)
-	-- Calculate the position taking into account any overrides
 	local effectivePos = ClickDetector.OverrideCursorPosition or pos
 
 	local clickDetector, result = ClickDetector._GetTopClickDetector(effectivePos)
 	if clickDetector then
+		-- === NEW: Prevent thumbstick from taking over if we hit a ClickDetector ===
+		if IsPointInThumbstick(effectivePos) then
+			CancelThumbstick()
+		end
+
 		clickDetector.LeftDown:Fire(result.Instance, result)
 		lastMouseDownPart = result.Instance
 	end
 end)
 
 MouseTouch.LeftUp:Connect(function(pos)
-	-- Calculate the position taking into account any overrides
 	local effectivePos = ClickDetector.OverrideCursorPosition or pos
 
 	local clickDetector, result = ClickDetector._GetTopClickDetector(effectivePos)

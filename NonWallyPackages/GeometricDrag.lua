@@ -128,7 +128,7 @@ end
 function GeometricDrag:_MakeDefaultDragStyle()
 	local raycastParams = RaycastParams.new()
 	raycastParams.FilterType = Enum.RaycastFilterType.Exclude
-	raycastParams.FilterDescendantsInstances = { self._Part, Player.Character }
+	raycastParams.FilterDescendantsInstances = self._Part:GetConnectedParts(true)
 
 	return function(adjustedMousePos)
 		-- Use the adjusted position for the ray

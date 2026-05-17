@@ -407,15 +407,19 @@ function ModelEditorUtils.PrepareForMoving(model)
 
 	toolTrove:Add(RunService.Stepped:Connect(function(time, deltaTime)
 		ModelEditorUtils.UpdateSymmetricalParts(model)
+
+		-- 1. Fetch the bounds part once per frame.
+		-- This is slightly more optimized than calling :Get() inside the loop.
+		local boundsPart = Props.BoundsPart:Get()
+
 		for trackedModel, highlight in trackedBoundsModels do
+			-- 2. Add 'boundsPart and' before your bounds check.
+			-- If boundsPart is nil, Luau will short-circuit and skip IsModelBoundsFullyInBounds entirely.
 			if
 				trackedModel:HasTag(ModelEditorServerSafeUtils.DiscardingTag)
 				or (
-					not ModelUtils.IsModelBoundsFullyInBounds(
-						trackedModel,
-						workspace.CakeEditorBounds.CFrame,
-						workspace.CakeEditorBounds.Size
-					)
+					boundsPart
+					and not ModelUtils.IsModelBoundsFullyInBounds(trackedModel, boundsPart.CFrame, boundsPart.Size)
 				)
 			then
 				highlight.Enabled = true

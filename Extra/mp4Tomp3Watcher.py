@@ -1,5 +1,6 @@
 import os
 import time
+import threading
 from pathlib import Path
 from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler
@@ -17,35 +18,50 @@ class VideoHandler(FileSystemEventHandler):
         if file_path.suffix.lower() == ".mp4":
             print(f"✨ New MP4 detected: {file_path.name}")
 
-            # --- NEW: Wait for the file to be fully written ---
-            if self.wait_for_file_readiness(file_path):
-                self.convert_mp4_to_mp3(file_path)
-            else:
-                print(
-                    f"⚠️ Skipping {file_path.name}: File stayed locked or busy too long."
-                )
+            # --- NEW: Spawn a thread so we don't block Watchdog from seeing other events ---
+            threading.Thread(
+                target=self.process_video, args=(file_path,), daemon=True
+            ).start()
 
-    def wait_for_file_readiness(self, file_path, timeout=30):
-        """Waits until the file size is stable and the file is accessible."""
+    def process_video(self, file_path):
+        if self.wait_for_file_readiness(file_path):
+            self.convert_mp4_to_mp3(file_path)
+        else:
+            print(f"⚠️ Skipping {file_path.name}: File stayed locked or busy too long.")
+
+    def wait_for_file_readiness(self, file_path, timeout=3600):
+        """Waits until the file size is strictly stable and the file is accessible."""
+        # Increased timeout to 3600 seconds (1 hour) to account for long recordings/downloads
         last_size = -1
+        consecutive_stable_checks = 0
         start_time = time.time()
 
         while time.time() - start_time < timeout:
             try:
                 current_size = os.path.getsize(file_path)
-                # If size is > 0 and hasn't changed in the last second
+
+                # --- NEW: Require the file size to remain the SAME for multiple loops ---
                 if current_size > 0 and current_size == last_size:
-                    # Final check: Try to open the file for appending to see if it's locked
-                    with open(file_path, "ab"):
+                    consecutive_stable_checks += 1
+                else:
+                    consecutive_stable_checks = 0  # Reset counter if the file grew
+
+                last_size = current_size
+
+                # If size hasn't changed for 4 consecutive checks (8 seconds), it's likely done
+                if consecutive_stable_checks >= 4:
+                    # Final strict lock check: Try opening for both reading AND writing.
+                    # This will fail on Windows if another program is actively writing to it.
+                    with open(file_path, "r+b"):
                         pass
                     return True
 
-                last_size = current_size
-            except (OSError, IOError):
-                # File is still locked by the recording software
-                pass
+            except (OSError, IOError, PermissionError):
+                # File is still strictly locked by the OS/recording software
+                consecutive_stable_checks = 0
 
-            time.sleep(2)  # Wait 2 seconds between checks
+            time.sleep(2)  # Wait 2 seconds before checking again
+
         return False
 
     def convert_mp4_to_mp3(self, mp4_path):
@@ -53,9 +69,9 @@ class VideoHandler(FileSystemEventHandler):
             mp3_path = mp4_path.with_suffix(".mp3")
             print(f"🎬 Converting {mp4_path.name} to MP3...")
 
-            video = VideoFileClip(str(mp4_path))
-            video.audio.write_audiofile(str(mp3_path), logger=None)
-            video.close()
+            # --- NEW: Use a context manager (with block) to ensure file handles are released ---
+            with VideoFileClip(str(mp4_path)) as video:
+                video.audio.write_audiofile(str(mp3_path), logger=None)
 
             print(f"✅ Success! Created: {mp3_path.name}")
         except Exception as e:
@@ -72,9 +88,11 @@ if __name__ == "__main__":
 
     print(f"🚀 Monitoring: {os.path.abspath(WATCH_DIRECTORY)}")
     observer.start()
+
     try:
         while True:
             time.sleep(1)
     except KeyboardInterrupt:
         observer.stop()
+
     observer.join()

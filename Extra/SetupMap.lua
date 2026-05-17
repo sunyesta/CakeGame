@@ -1,43 +1,49 @@
 local Selection = game:GetService("Selection")
 
 -- Get all currently selected objects
-local selectedObjects = Selection:Get()
+local selectedObjects: { Instance } = Selection:Get()
 
 if #selectedObjects == 0 then
 	warn("Nothing is selected! Please select a model first.")
 else
-	local map = selectedObjects[1]
+	-- Grab the first selected item
+	local map: Model = selectedObjects[1]
+	map.PrimaryPart = map.Pivot
+	map:PivotTo(workspace.NeighborhoodPivot:GetPivot())
 
-	local WaterBackground: MeshPart = map.WaterBackground
-	WaterBackground.Color = Color3.fromRGB(45, 107, 135)
-	WaterBackground.Material = Enum.Material.Neon
-	WaterBackground.Anchored = true
+	-- :GetDescendants() grabs every nested object inside the map
+	local descendants: { Instance } = map:GetDescendants()
 
-	local WaterTop: MeshPart = map.WaterTop
-	WaterTop.Color = Color3.fromRGB(45, 107, 135)
-	WaterTop.Material = Enum.Material.Neon
-	WaterTop.CanCollide = false
-	WaterTop.DoubleSided = true
-	WaterTop.Anchored = true
+	local processedCount: number = 0
 
-	-- local Water: MeshPart = map.Water
-	-- Water.CanCollide = false
-	-- Water.Transparency = 1
-	-- Water.Anchored = true
-	-- Water:AddTag("Water")
+	for _, child: Instance in descendants do
+		-- Check if the child is a physical part that can be anchored and colored
+		if child:IsA("BasePart") then
+			-- 1. Anchor all parts in the map
+			child.Anchored = true
+			processedCount += 1
 
-	local WaterPlane: MeshPart = map.WaterPlane
-	WaterPlane.CanCollide = false
-	WaterPlane.Transparency = 1
-	WaterPlane.Anchored = true
-	WaterPlane:AddTag("Water")
+			-- 2. Check prefixes and apply specific properties
+			-- The "^" symbol in string.match means "starts with"
+			if child.Name:match("^Grass") then
+				child.Color = Color3.new(0.392157, 0.603922, 0.317647)
+				child.Material = Enum.Material.Plastic
+				child.MaterialVariant = "Grass"
+			elseif child.Name:match("^Fence") then
+				child.Color = Color3.new(0.411765, 0.572549, 0.329412)
+				child.Material = Enum.Material.Plastic
+				child.MaterialVariant = "WoodBoard"
+			elseif child.Name:match("^Water") then
+				child.Color = Color3.new(0.25098, 0.568627, 0.627451)
+				child.Material = Enum.Material.Plastic
+				child.MaterialVariant = "RoughPlastic"
+			elseif child.Name:match("^Path") then
+				child.Color = Color3.fromRGB(127, 118, 58)
+				child.Material = Enum.Material.Plastic
+				child.MaterialVariant = "Grass"
+			end
+		end
+	end
 
-	local Dock: MeshPart = map.Dock
-	Dock.Color = Color3.fromRGB(105, 64, 40)
-	Dock.Anchored = true
-
-	local Ground: MeshPart = map.Ground
-	Ground.Color = Color3.fromRGB(163, 162, 165)
-	Ground.CollisionFidelity = Enum.CollisionFidelity.PreciseConvexDecomposition
-	Ground.Anchored = true
+	print(`Map processing complete! Successfully anchored and checked {processedCount} parts.`)
 end

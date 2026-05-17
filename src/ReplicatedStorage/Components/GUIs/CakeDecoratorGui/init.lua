@@ -3,6 +3,7 @@
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local TweenService = game:GetService("TweenService")
+local Workspace = game:GetService("Workspace")
 
 --Packages
 local Component = require(ReplicatedStorage.Packages.Component)
@@ -22,6 +23,7 @@ local SideBars = require(script.SideBars)
 local ColorTab = require(script.ColorTab)
 local ProximityPrompt = require(ReplicatedStorage.Common.Components.Models.ProximityPrompt)
 local ClientComm = require(ReplicatedStorage.Packages.Comm).ClientComm
+local PlayerContext = require(ReplicatedStorage.Common.Controllers.PlayerContext)
 local PlayerComm = ClientComm.new(ReplicatedStorage.Comm, true, "PlayerComm"):BuildObject()
 
 --Instances
@@ -45,6 +47,7 @@ function CakeDecoratorGui:Construct()
 	-- OpenTrove and TabTrove will be managed dynamically to prevent ghost connections.
 	self._Trove = Trove.new()
 	self.Gui = self.Instance
+	self.CakeBuildPlatform = workspace:WaitForChild("CakeDecoratorArea"):WaitForChild("CakeBuildPlatform")
 
 	-- UI References
 	self.MainPanel = self.Gui:WaitForChild("MainPanel")
@@ -175,6 +178,18 @@ function CakeDecoratorGui:Stop()
 end
 
 function CakeDecoratorGui.Open()
+	-- start the model editor controller
+	ModelEditorController.BoundsPart:Set(Workspace:WaitForChild("CakeDecoratorArea"):WaitForChild("CakeEditorBounds"))
+	ModelEditorController.Start("CakeDecorator")
+	local holdingCake = PlayerContext.HoldingCake:Get()
+	if holdingCake then
+		ModelEditorController.Load(holdingCake:GetAttribute("CakeData"))
+		PlayerComm:RemoveCakeTool(holdingCake)
+	end
+
+	Cameras.CakeCamera.Priority = GameEnums.CameraPriorities.PlayerCameraOverride
+	Cinemachine.Brain:RefreshPriority()
+
 	if CakeDecoratorGui.IsOpen:Get() then
 		return
 	end
@@ -199,10 +214,6 @@ function CakeDecoratorGui.Open()
 		Cameras.CakeCamera.Priority = GameEnums.CameraPriorities.Off
 		Cinemachine.Brain:RefreshPriority()
 	end)
-
-	ModelEditorController.Start("CakeDecorator")
-	Cameras.CakeCamera.Priority = GameEnums.CameraPriorities.PlayerCameraOverride
-	Cinemachine.Brain:RefreshPriority()
 
 	-- 1. Start Sub-Modules
 	self._OpenTrove:Add(SideBars.Start(self))
@@ -269,8 +280,9 @@ function CakeDecoratorGui.Close()
 		return
 	end
 
+	-- create the cake model
 	local cakeData = ModelEditorController.Save()
-	PlayerComm:GiveCakeTool(cakeData)
+	PlayerComm:CreateCakeModel(cakeData, self.CakeBuildPlatform:GetPivot())
 
 	self.Gui.Enabled = false
 

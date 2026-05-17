@@ -2,6 +2,8 @@ local Players = game:GetService("Players")
 local UserInputService = game:GetService("UserInputService")
 local Workspace = game:GetService("Workspace")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
+
+-- Assuming these are appropriately placed in your game structure
 local ComponentBase = require(script.Parent.ComponentBase)
 local MathUtils = require(script.Parent.Parent.Utils.MathUtils)
 local MultiTouch = require(ReplicatedStorage.NonWallyPackages.MultiTouch)
@@ -107,6 +109,9 @@ function Trackball.new(config)
 	self.TargetPitch = self.Pitch
 	self.TargetDistance = self.Distance
 
+	-- ADDED: Tracks the actual physical distance after collisions to fix the "slow scroll back" issue
+	self.ActualDistance = self.DefaultDistance
+
 	self._currentPivot = nil -- Used to track the smoothly interpolating focus position
 
 	-- Transparency State
@@ -125,13 +130,20 @@ function Trackball:SetupInput()
 		if processed then
 			return
 		end
-		-- ADDED: Check if ZoomControlEnabled is true
+
 		if input.UserInputType == Enum.UserInputType.MouseWheel and self.ZoomControlEnabled then
-			self.TargetDistance = math.clamp(
-				self.TargetDistance - (input.Position.Z * self.ZoomSpeed),
-				self.MinDistance,
-				self.MaxDistance
-			)
+			local scrollDelta = input.Position.Z
+			local startDistance = self.TargetDistance
+
+			-- ADDED: If scrolling IN and the camera is currently pushed against a wall,
+			-- sync the target distance to the physical wall distance instantly.
+			if scrollDelta > 0 and self.ActualDistance < self.TargetDistance - 0.1 then
+				startDistance = self.ActualDistance
+				self.Distance = self.ActualDistance -- Prevents slow damping catch-up
+			end
+
+			self.TargetDistance =
+				math.clamp(startDistance - (scrollDelta * self.ZoomSpeed), self.MinDistance, self.MaxDistance)
 		end
 	end)
 
@@ -166,7 +178,6 @@ function Trackball:SetupInput()
 
 		-- 1 Finger: Orbit/Rotate
 		if #touchPositions == 1 and #prevPositions == 1 then
-			-- ADDED: Check if RotationControlEnabled is true
 			if self.RotationControlEnabled then
 				local delta = touchPositions[1] - prevPositions[1]
 
@@ -177,19 +188,23 @@ function Trackball:SetupInput()
 
 		-- 2 Fingers: Pinch to Zoom
 		elseif #touchPositions == 2 and #prevPositions == 2 then
-			-- ADDED: Check if ZoomControlEnabled is true
 			if self.ZoomControlEnabled then
 				local lastDistance = (prevPositions[2] - prevPositions[1]).Magnitude
 				local curDistance = (touchPositions[2] - touchPositions[1]).Magnitude
 
 				local zoomDelta = curDistance - lastDistance
-
-				-- Adjust zoom sensitivity for touch (usually needs to be slower than raw pixels)
 				local touchZoomSpeed = self.ZoomSpeed * 0.05
+				local startDistance = self.TargetDistance
 
-				-- Pinch out (positive delta) = Zoom In (decrease distance)
+				-- ADDED: Pinch out (positive delta) = Zoom In.
+				-- If zooming in while pressed against a wall, sync the distance.
+				if zoomDelta > 0 and self.ActualDistance < self.TargetDistance - 0.1 then
+					startDistance = self.ActualDistance
+					self.Distance = self.ActualDistance
+				end
+
 				self.TargetDistance =
-					math.clamp(self.TargetDistance - (zoomDelta * touchZoomSpeed), self.MinDistance, self.MaxDistance)
+					math.clamp(startDistance - (zoomDelta * touchZoomSpeed), self.MinDistance, self.MaxDistance)
 			end
 		end
 	end))
@@ -487,6 +502,9 @@ function Trackball:Mutate(vcam, state, dt)
 	-- Scale the distance down if we hit something. Because we scale the entire 'localDirection',
 	-- the character maintains their exact percentage-based spot on the screen even when pushed inward!
 	local finalDistance = self.Distance * hitRatio
+
+	-- ADDED: Store this actual distance for the scroll input check
+	self.ActualDistance = finalDistance
 
 	-- 6. Humanoid Transparency Handling
 	-- Passing finalDistance (which acts as the Z depth to the camera plane)

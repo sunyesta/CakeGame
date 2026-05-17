@@ -13,6 +13,7 @@ Cinemachine:Start()
 local Player = Players.LocalPlayer
 
 local PlayerModule = require(Player.PlayerScripts:WaitForChild("PlayerModule"))
+local Property = require(ReplicatedStorage.NonWallyPackages.Property)
 local Controls = PlayerModule:GetControls()
 
 function GetBoundingBox(root: Instance): (CFrame, Vector3)
@@ -69,6 +70,9 @@ function PlayerCamera()
 	playerCamera.Priority = GameEnums.CameraPriorities.PlayerCamera
 	Cinemachine.Brain:RefreshPriority()
 
+	playerCamera.Props = {}
+	playerCamera.Props.FreezeCamera = Property.new()
+
 	-- The Body component (RobloxControlCamera) is what handles positioning and offsets
 	playerCamera.Body = Cinemachine.Components.RobloxControlCamera.new({
 		StartDistance = 15,
@@ -94,6 +98,16 @@ function PlayerCamera()
 			activeTrove:Add(function()
 				SoundService:SetListener(Enum.ListenerType.Camera)
 			end)
+		end))
+
+		activeTrove:Add(playerCamera.Props.FreezeCamera:Observe(function(freezeCamera)
+			if freezeCamera then
+				playerCamera.Body.RotationControlEnabled = false
+				playerCamera.Body.ZoomControlEnabled = false
+			else
+				playerCamera.Body.RotationControlEnabled = true
+				playerCamera.Body.ZoomControlEnabled = true
+			end
 		end))
 	end)
 
@@ -129,7 +143,7 @@ function CakeCamera()
 
 	Cinemachine.Brain:Register(cakeCamera)
 
-	local CakeBuildPlatform = workspace:WaitForChild("CakeDecorationArea"):WaitForChild("CakeBuildPlatform")
+	local CakeBuildPlatform = workspace:WaitForChild("CakeDecoratorArea"):WaitForChild("CakeBuildPlatform")
 	local ModelEditorModels = workspace:WaitForChild("ModelEditorModels")
 
 	print(cakeCamera._IsActive)
@@ -137,7 +151,6 @@ function CakeCamera()
 		Controls:Disable()
 
 		activeTrove:Add(function()
-			print("Controls enabled")
 			Controls:Enable()
 		end)
 
