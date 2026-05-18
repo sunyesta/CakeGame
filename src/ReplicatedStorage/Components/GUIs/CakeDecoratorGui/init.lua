@@ -171,7 +171,9 @@ function CakeDecoratorGui:SetActiveTab(activeTabName: string)
 	end
 end
 
-function CakeDecoratorGui:Start() end
+function CakeDecoratorGui:Start()
+	self.Gui.Enabled = false
+end
 
 function CakeDecoratorGui:Stop()
 	self._Trove:Clean()
