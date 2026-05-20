@@ -12,8 +12,39 @@ local PointVisualizer = require(ReplicatedStorage.NonWallyPackages.PointVisualiz
 
 local DEBUG = true
 local SETTLE_TIME = 4
+local NEAREST_PLAYER_MAX_DISTANCE = 50
 
 local PhysicsDrag = {}
+
+-- Returns true if the part is currently eligible for network ownership
+-- transfer. A part is ineligible when it is anchored OR when it is welded
+-- (directly or transitively) to an anchored part.
+--
+-- On the server we use the canonical BasePart:CanSetNetworkOwnership() API,
+-- which is authoritative. On the client that API errors ("Network Ownership
+-- API can only be called from the Server"), so we replicate its logic by
+-- walking the assembly via GetConnectedParts(true) and looking for any
+-- anchored part. Anchored state and weld topology both replicate to clients,
+-- so the result agrees with the server in steady state.
+local function canSetOwnership(part: BasePart): (boolean, string?)
+	if RunService:IsServer() then
+		local ok, reason = part:CanSetNetworkOwnership()
+		if not ok then
+			return false, reason
+		end
+		return true, nil
+	else
+		if part.Anchored then
+			return false, "Part is anchored"
+		end
+		for _, connectedPart in part:GetConnectedParts(true) do
+			if connectedPart.Anchored then
+				return false, "Part is welded to an anchored part"
+			end
+		end
+		return true, nil
+	end
+end
 
 if RunService:IsClient() then
 	local ClientComm = Comm.ClientComm
@@ -85,6 +116,18 @@ if RunService:IsClient() then
 		if self._IsDragging then
 			if DEBUG then
 				warn("[PhysicsDrag] Rejected: Already dragging")
+			end
+			return Promise.resolve(false)
+		end
+
+		-- Instant local rejection for anchored / welded-to-anchored parts.
+		-- CanSetNetworkOwnership returns false for both cases, and the server
+		-- would reject these requests anyway — checking here avoids the
+		-- roundtrip.
+		local canSet, reason = canSetOwnership(self._GrabPart)
+		if not canSet then
+			if DEBUG then
+				warn(`[PhysicsDrag] Client Rejected: Cannot set network ownership ({reason})`)
 			end
 			return Promise.resolve(false)
 		end
@@ -243,25 +286,93 @@ else
 
 	PhysicsDragServer.FilterTypes = FILTER_TYPES
 
+	-- Returns the nearest player within NEAREST_PLAYER_MAX_DISTANCE studs of `part`,
+	-- or nil if no eligible player is found.
+	local function getNearestPlayer(part: BasePart): Player?
+		local partPosition = part.Position
+		local nearestPlayer: Player? = nil
+		local nearestDistance = NEAREST_PLAYER_MAX_DISTANCE
+
+		for _, player in Players:GetPlayers() do
+			local character = player.Character
+			if not character then
+				continue
+			end
+
+			local rootPart = character:FindFirstChild("HumanoidRootPart") :: BasePart?
+			if not rootPart then
+				continue
+			end
+
+			local distance = (rootPart.Position - partPosition).Magnitude
+			if distance <= nearestDistance then
+				nearestDistance = distance
+				nearestPlayer = player
+			end
+		end
+
+		return nearestPlayer
+	end
+
+	-- Assigns network ownership to the nearest player within range, or falls back
+	-- to automatic ownership if no player qualifies. Safely no-ops if network
+	-- ownership cannot be set on the part (anchored or welded to an anchored
+	-- assembly).
+	local function assignOwnershipToNearestPlayer(part: BasePart)
+		if not canSetOwnership(part) then
+			return
+		end
+
+		local nearestPlayer = getNearestPlayer(part)
+		if nearestPlayer then
+			local success, err = pcall(function()
+				part:SetNetworkOwner(nearestPlayer)
+			end)
+			if not success then
+				if DEBUG then
+					warn(`[PhysicsDrag] Failed to set network owner to {nearestPlayer.Name}: {err}`)
+				end
+				return
+			end
+			if DEBUG then
+				print(`[PhysicsDrag] Network ownership assigned to nearest player: {nearestPlayer.Name}`)
+			end
+		else
+			pcall(function()
+				part:SetNetworkOwnershipAuto()
+			end)
+			if DEBUG then
+				print(`[PhysicsDrag] No player within {NEAREST_PLAYER_MAX_DISTANCE} studs. Ownership set to Auto.`)
+			end
+		end
+	end
+
 	function PhysicsDragServer.CreateDragHandler(part: BasePart)
 		local self = setmetatable({}, PhysicsDragServer)
 		self._Trove = Trove.new()
 		self.Instance = part
 		self.FilterType = Property.new(FILTER_TYPES.Exclude)
-		self.AllowDraggingAnchoredParts = true
 
 		self.Instance:SetAttribute("PhysicsDrag_LockOwnershipDuringSettleTime", true)
 		self.Instance:SetAttribute("PhysicsDrag_IsSettling", false)
+		self.Instance:SetAttribute("PhysicsDrag_IsHeld", false)
+		print("set attributes for", part)
 
 		self._IsActivelyHeld = false
 		self._ActiveOwnerName = nil
 		self._SettleThread = nil
-		self._OriginalAnchored = part.Anchored
 
 		self._Comm = self._Trove:Add(ServerComm.new(self.Instance, "_PhysicsDragComm"))
 
-		self._Trove:Add(RunService.Heartbeat:Connect(function()
-			if self.Instance.Anchored then
+		-- Reassigns network ownership to the nearest player in range if the part
+		-- currently has no owner (server-owned), and writes the resulting owner
+		-- name to the PhysicsDrag_NetworkOwner attribute. Skips when ownership
+		-- can't be set (anchored / welded-to-anchored), actively held, or
+		-- locked during settle time.
+		local function refreshOwnership()
+			-- If ownership can't be set on this part (anchored or welded to an
+			-- anchored assembly), make sure the attribute is cleared and bail.
+			if not canSetOwnership(self.Instance) then
 				if self.Instance:GetAttribute("PhysicsDrag_NetworkOwner") ~= nil then
 					self.Instance:SetAttribute("PhysicsDrag_NetworkOwner", nil)
 				end
@@ -272,23 +383,52 @@ else
 				return self.Instance:GetNetworkOwner()
 			end)
 
-			local currentOwnerName = nil
+			local currentOwnerName: string? = nil
 			if success and owner then
 				currentOwnerName = owner.Name
+			end
+
+			-- If no player currently owns the part and it isn't actively held or
+			-- locked during the settle window, try to assign the nearest player.
+			local isLocked = self.Instance:GetAttribute("PhysicsDrag_LockOwnershipDuringSettleTime")
+			local isSettling = self._SettleThread ~= nil
+			if not currentOwnerName and not self._IsActivelyHeld and not (isLocked and isSettling) then
+				local nearestPlayer = getNearestPlayer(self.Instance)
+				if nearestPlayer then
+					local assignSuccess = pcall(function()
+						self.Instance:SetNetworkOwner(nearestPlayer)
+					end)
+					if assignSuccess then
+						currentOwnerName = nearestPlayer.Name
+						if DEBUG then
+							print(`[PhysicsDrag] Auto-assigned ownership to nearest player: {nearestPlayer.Name}`)
+						end
+					end
+				end
 			end
 
 			if self.Instance:GetAttribute("PhysicsDrag_NetworkOwner") ~= currentOwnerName then
 				self.Instance:SetAttribute("PhysicsDrag_NetworkOwner", currentOwnerName)
 			end
-		end))
+		end
+
+		-- Run once synchronously so the attribute exists immediately on creation
+		-- rather than waiting for the first Heartbeat tick.
+		refreshOwnership()
+
+		self._Trove:Add(RunService.Heartbeat:Connect(refreshOwnership))
 
 		self._Comm:BindFunction("SetOwnershipState", function(player: Player, wantsOwnership: boolean)
 			if wantsOwnership then
-				if self.Instance.Anchored and not self.AllowDraggingAnchoredParts then
+				-- Reject if the part is anchored or welded to an anchored
+				-- assembly. CanSetNetworkOwnership covers both cases — calling
+				-- SetNetworkOwner on such a part would error.
+				local canSet, reason = canSetOwnership(self.Instance)
+				if not canSet then
 					if DEBUG then
-						warn(`[PhysicsDrag] {player.Name} rejected: Part is anchored`)
+						warn(`[PhysicsDrag] {player.Name} rejected: Cannot set network ownership ({reason})`)
 					end
-					return false, "Part is anchored"
+					return false, "Part cannot have its network ownership set (anchored or welded to anchored part)"
 				end
 
 				if self._IsActivelyHeld and self._ActiveOwnerName ~= player.Name then
@@ -313,10 +453,6 @@ else
 					task.cancel(self._SettleThread)
 					self._SettleThread = nil
 					self.Instance:SetAttribute("PhysicsDrag_IsSettling", false)
-				end
-
-				if not self._IsActivelyHeld then
-					self._OriginalAnchored = self.Instance.Anchored
 				end
 
 				self.Instance.Anchored = true
@@ -353,17 +489,9 @@ else
 								self.Instance:SetAttribute("PhysicsDrag_IsSettling", false)
 								self.Instance:SetAttribute("PhysicsDrag_NetworkOwner", nil)
 
-								if self.AllowDraggingAnchoredParts and self._OriginalAnchored then
-									self.Instance.Anchored = true
-									if DEBUG then
-										print(`[PhysicsDrag] Settle time elapsed. Part re-anchored.`)
-									end
-								else
-									self.Instance:SetNetworkOwnershipAuto()
-									if DEBUG then
-										print(`[PhysicsDrag] Settle time elapsed. Ownership set to Auto.`)
-									end
-								end
+								-- Hand off to the nearest player within range,
+								-- falling back to Auto if none qualify.
+								assignOwnershipToNearestPlayer(self.Instance)
 							end
 						end
 

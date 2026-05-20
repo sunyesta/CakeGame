@@ -459,7 +459,7 @@ function WidgetUtils.CreateColorSlider(parent, labelText, property, channel, tro
 		Text = labelText,
 		Size = UDim2.new(0, 50, 0, 14),
 		TextXAlignment = Enum.TextXAlignment.Left,
-		TextColor3 = THEME.TextMuted,
+		TextColor3 = WidgetUtils.THEME.TextMuted,
 		TextSize = 12,
 	})
 	local valueText = WidgetUtils.CreateText(container, {
@@ -530,6 +530,12 @@ function WidgetUtils.CreateColorSlider(parent, labelText, property, channel, tro
 		local currentColor = property:Get() or Color3.new()
 		local r, g, b = currentColor.R, currentColor.G, currentColor.B
 
+		-- FIX: Prevent feedback loop by only setting if the value has actually changed
+		local currentChannelVal = channel == "R" and r or channel == "G" and g or b
+		if math.abs(currentChannelVal - val) < 0.001 then
+			return
+		end
+
 		if channel == "R" then
 			r = val
 		elseif channel == "G" then
@@ -569,7 +575,7 @@ function WidgetUtils.CreateHSVSlider(parent, labelText, property, channel, trove
 		Text = labelText,
 		Size = UDim2.new(0, 80, 0, 14),
 		TextXAlignment = Enum.TextXAlignment.Left,
-		TextColor3 = THEME.TextMuted,
+		TextColor3 = WidgetUtils.THEME.TextMuted,
 		TextSize = 12,
 	})
 	local valueText = WidgetUtils.CreateText(container, {
@@ -647,6 +653,12 @@ function WidgetUtils.CreateHSVSlider(parent, labelText, property, channel, trove
 		end
 		local currentColor = property:Get() or Color3.new()
 		local h, s, v = currentColor:ToHSV()
+
+		-- FIX: Prevent feedback loop by only setting if the value has actually changed
+		local currentChannelVal = channel == "H" and h or channel == "S" and s or v
+		if math.abs(currentChannelVal - val) < 0.001 then
+			return
+		end
 
 		if channel == "H" then
 			h = val

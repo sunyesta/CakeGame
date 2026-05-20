@@ -14,6 +14,7 @@ local SelectSimilar = require(script.Parent.Tools.SelectSimilar)
 local AspectRatioResizer = require(script.Parent.Tools.AspectRatioResizer)
 local MoveTool = require(script.Parent.Tools.MoveTool)
 local WeldTool = require(script.Parent.Tools.WeldTool) -- NEW REQUIRED MODULE
+local SeparateTool = require(script.Parent.Tools.SeparateTool)
 
 local THEME = Config.THEME
 local ICONS = Config.ICONS
@@ -189,6 +190,9 @@ function Widget.Init(plugin: Plugin, pluginTrove: any)
 	header.Parent = mainContainer
 	scrollFrame.Parent = mainContainer
 	mainContainer.Parent = gui
+
+	local separateSection = SeparateTool.Create()
+	separateSection.Parent = scrollFrame
 
 	pluginTrove:Add(gui)
 

@@ -8,6 +8,21 @@ version = "2.0.3"
 dependencies = []
 
 [[package]]
+name = "daad/debugutil"
+version = "0.0.9"
+dependencies = []
+
+[[package]]
+name = "daad/dragme"
+version = "0.1.12"
+dependencies = [["debugutil", "daad/debugutil@0.0.9"]]
+
+[[package]]
+name = "destinecarma/draggable"
+version = "1.1.3"
+dependencies = [["Signal", "lucasmzreal/fastsignal@10.4.0"]]
+
+[[package]]
 name = "evaera/promise"
 version = "4.0.0"
 dependencies = []
@@ -15,6 +30,11 @@ dependencies = []
 [[package]]
 name = "jakeywastaken/smartbone-2"
 version = "0.4.2"
+dependencies = []
+
+[[package]]
+name = "lucasmzreal/fastsignal"
+version = "10.4.0"
 dependencies = []
 
 [[package]]
@@ -90,4 +110,4 @@ dependencies = []
 [[package]]
 name = "sunyesta/art-room"
 version = "0.0.1"
-dependencies = [["Comm", "sleitnick/comm@1.0.1"], ["Component", "sleitnick/component@2.4.8"], ["Input", "sleitnick/input@2.3.0"], ["Loader", "sleitnick/loader@2.0.0"], ["Promise", "evaera/promise@4.0.0"], ["Shake", "sleitnick/shake@0.1.7"], ["Signal", "sleitnick/signal@1.5.0"], ["Streamable", "sleitnick/streamable@1.2.4"], ["TableUtil", "sleitnick/table-util@1.2.0"], ["Trove", "sleitnick/trove@0.5.0"], ["WindShake", "boatbomber/windshake@2.0.3"], ["smartbone2", "jakeywastaken/smartbone-2@0.4.2"]]
+dependencies = [["Comm", "sleitnick/comm@1.0.1"], ["Component", "sleitnick/component@2.4.8"], ["DragMe", "daad/dragme@0.1.12"], ["Input", "sleitnick/input@2.3.0"], ["Loader", "sleitnick/loader@2.0.0"], ["Promise", "evaera/promise@4.0.0"], ["Shake", "sleitnick/shake@0.1.7"], ["Signal", "sleitnick/signal@1.5.0"], ["Streamable", "sleitnick/streamable@1.2.4"], ["TableUtil", "sleitnick/table-util@1.2.0"], ["Trove", "sleitnick/trove@0.5.0"], ["WindShake", "boatbomber/windshake@2.0.3"], ["draggable", "destinecarma/draggable@1.1.3"], ["smartbone2", "jakeywastaken/smartbone-2@0.4.2"]]

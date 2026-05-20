@@ -1,21 +1,22 @@
--- --!strict
--- -- This script listens for the Client requesting to disable/enable mobile movement UI.
--- -- Place this script inside ServerScriptService.
+-- ServerScriptService/MakePartDraggable.server.lua
+local CollectionService = game:GetService("CollectionService")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local DragMe = require(ReplicatedStorage.NonWallyPackages.DragMe)
 
--- local ReplicatedStorage = game:GetService("ReplicatedStorage")
+-- 1. Initialize the DragMe Server Module
+DragMe.init()
 
--- -- Create the RemoteEvent for the client to communicate with
--- local ToggleTouchMovement = Instance.new("RemoteEvent")
--- ToggleTouchMovement.Name = "ToggleTouchMovement"
--- ToggleTouchMovement.Parent = ReplicatedStorage
+-- 2. Locate workspace.Part and make it Draggable
+local part = workspace:FindFirstChild("DragPart")
 
--- -- Listen for the client firing the event
--- ToggleTouchMovement.OnServerEvent:Connect(function(player: Player, disableMovement: boolean)
--- 	if disableMovement then
--- 		-- Scriptable removes the invisible thumbstick zone entirely
--- 		player.DevTouchMovementMode = Enum.DevTouchMovementMode.Scriptable
--- 	else
--- 		-- UserChoice returns it to the player's default Roblox settings
--- 		player.DevTouchMovementMode = Enum.DevTouchMovementMode.UserChoice
--- 	end
--- end)
+if part and part:IsA("BasePart") then
+	-- 'Draggable' makes the physics engine allow players to pick it up
+	CollectionService:AddTag(part, "Draggable")
+
+	-- 'Targetable' allows the hover controller to highlight it when looked at
+	CollectionService:AddTag(part, "Targetable")
+
+	-- Optional: Give it UI display attributes so the hover billboard shows custom info
+	part:SetAttribute("DisplayName", "My Special Part")
+	part:SetAttribute("DisplayCategory", "Interactive Object")
+end

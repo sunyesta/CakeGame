@@ -5,7 +5,6 @@ local Component = require(ReplicatedStorage.Packages.Component)
 local Trove = require(ReplicatedStorage.Packages.Trove)
 local ServerComm = require(ReplicatedStorage.Packages.Comm).ServerComm
 local SoundUtils = require(ReplicatedStorage.NonWallyPackages.SoundUtils)
-local PhysicsDrag = require(ReplicatedStorage.NonWallyPackages.PhysicsDrag)
 
 -- Create a single Random object for generating variance
 local rng = Random.new()
@@ -25,8 +24,8 @@ function CakeModel:Construct()
 
 	-- We bind the sound to the Cake itself now
 	self.EatingSound = SoundUtils.MakeSound("rbxassetid://103412029437228", self.Instance)
-
-	self._Trove:Add(PhysicsDrag.CreateDragHandler(self.Instance.PrimaryPart))
+	self.Instance:AddTag("Draggable")
+	self.Instance:AddTag("DragUpright")
 end
 
 function CakeModel:Start()

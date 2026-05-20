@@ -1,143 +1,147 @@
-local CollectionService = game:GetService("CollectionService")
+-- STREAMING_CHUNK:Requiring necessary services and modules...
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Workspace = game:GetService("Workspace")
+local CollectionService = game:GetService("CollectionService")
 
 local Component = require(ReplicatedStorage.Packages.Component)
 local Trove = require(ReplicatedStorage.Packages.Trove)
-local Signal = require(ReplicatedStorage.Packages.Signal)
+local ClientComm = require(ReplicatedStorage.Packages.Comm).ClientComm
+local TeleportingScreen = require(ReplicatedStorage.Common.Components.GUIs.TeleportingScreen)
 
 local Player = Players.LocalPlayer
 
--- Helper function to assert that the instance is governed by Persistent streaming
-local function assertPersistentStreaming(instance: Instance)
-	-- Find the first ancestor that is a Model, or use the instance itself if it is a Model
-	local model = if instance:IsA("Model") then instance else instance:FindFirstAncestorWhichIsA("Model")
+-- A global debounce to prevent the player from touching a DIFFERENT teleporter
+-- while the screen is currently fading to black.
+local isGlobalTeleporting = false
 
-	-- Assert will throw an error in the console if the condition is false
-	assert(
-		model and model.ModelStreamingMode == Enum.ModelStreamingMode.Persistent,
-		string.format(
-			"[TeleporterServer] ERROR: '%s' must be placed inside a Model with ModelStreamingMode set to 'Persistent'!",
-			instance:GetFullName()
-		)
-	)
-end
-
--- Hash table to store exit models
-local ExitModels = {}
-
--- Helper function to add an exit model to our dictionary
-local function onExitModelAdded(model: Model)
-	local teleporterName = model:GetAttribute("TeleporterName")
-	assertPersistentStreaming(model)
-	if teleporterName then
-		ExitModels[teleporterName] = model
-	end
-end
-
--- Helper function to remove an exit model from our dictionary if it gets destroyed/untagged
-local function onExitModelRemoved(model: Model)
-	local teleporterName = model:GetAttribute("TeleporterName")
-	if teleporterName and ExitModels[teleporterName] == model then
-		ExitModels[teleporterName] = nil
-	end
-end
-
--- 1. Grab any exit models that already exist in the Workspace
-for _, model in CollectionService:GetTagged("TeleporterExit") do
-	onExitModelAdded(model)
-end
-
--- 2. Listen for any future exit models that stream in or are created dynamically
-CollectionService:GetInstanceAddedSignal("TeleporterExit"):Connect(onExitModelAdded)
-CollectionService:GetInstanceRemovedSignal("TeleporterExit"):Connect(onExitModelRemoved)
-
+-- STREAMING_CHUNK:Defining the Teleporter component...
 local Teleporter = Component.new({
 	Tag = "Teleporter",
 	Ancestors = { Workspace },
 })
-Teleporter.Used = Signal.new() -- (teleporterName)
 
+-- STREAMING_CHUNK:Constructor for the Teleporter component...
 function Teleporter:Construct()
 	self._Trove = Trove.new()
-	self._isTeleporting = false -- Debounce to prevent multiple teleport fires
 
-	assertPersistentStreaming(self.Instance)
+	-- A local debounce to prevent spamming this specific teleporter
+	self._IsTeleporting = false
 end
 
+-- STREAMING_CHUNK:Start method and PrimaryPart handling...
 function Teleporter:Start()
-	-- Cast self.Instance as a Model instead of a BasePart
-	local model: Model = self.Instance
+	local model = self.Instance
 
-	-- Safely yield for the RootPart inside the model
-	local rootPart: BasePart = model:WaitForChild("RootPart")
+	-- Assert that it's a model and its streaming mode is Persistent
+	assert(model:IsA("Model"), "Teleporter instance must be a Model to support ModelStreamingMode and PrimaryPart.")
+	assert(
+		model.ModelStreamingMode == Enum.ModelStreamingMode.Persistent,
+		"Teleporter streaming mode must be Persistent! Model: " .. model.Name
+	)
 
-	-- Get the attribute from the Model.
-	-- (Note: If your attribute is on the RootPart, change this to rootPart:GetAttribute)
-	local teleporterName = model:GetAttribute("TeleporterName")
+	-- Wait for the PrimaryPart to exist
+	local primaryPart = model.PrimaryPart
+	if not primaryPart then
+		-- Yield until a PrimaryPart is assigned to the model
+		while not model.PrimaryPart do
+			task.wait()
+		end
+		primaryPart = model.PrimaryPart
+	end
 
-	-- Connect to the Touched event on the RootPart and track it with Trove
-	self._Trove:Connect(rootPart.Touched, function(hit: BasePart)
-		-- 1. Check debounce
-		if self._isTeleporting then
+	self.PrimaryPart = primaryPart
+
+	-- Parse the model's name to determine its type and base name
+	-- Example: "SpawnArea_TpIn" -> baseName = "SpawnArea", tpType = "TpIn"
+	local baseName: string, tpType: string = string.match(model.Name, "^(.+)_(TpIn)$")
+
+	-- We only need to listen for touches on the "In" teleporters
+	if tpType == "TpIn" then
+		self:SetupTeleporterIn(baseName)
+	end
+end
+
+-- STREAMING_CHUNK:Setting up the In-Teleporter touch events...
+function Teleporter:SetupTeleporterIn(baseName: string)
+	-- Use Trove to manage the connection so it cleans up if the teleporter is destroyed
+	self._Trove:Connect(self.PrimaryPart.Touched, function(hit: BasePart)
+		-- Check both local and global debounces!
+		if self._IsTeleporting or isGlobalTeleporting then
 			return
 		end
 
-		-- 2. Verify we hit a character
-		local character = hit.Parent
+		-- Find the model ancestor to safely detect Character
+		local character = hit:FindFirstAncestorWhichIsA("Model")
 		if not character then
 			return
 		end
 
-		-- 3. Verify it's the LocalPlayer's character (Client-sided check)
-		if character ~= Player.Character then
+		-- Verify it's the LocalPlayer who touched it
+		local player = Players:GetPlayerFromCharacter(character)
+		if player ~= Player then
 			return
 		end
 
-		local humanoid = character:FindFirstChild("Humanoid")
-		local charRootPart = character:FindFirstChild("HumanoidRootPart")
-
-		-- 4. Ensure the character is alive and valid
-		if humanoid and humanoid.Health > 0 and charRootPart then
-			local exitModel: Model = ExitModels[teleporterName]
-
-			if teleporterName and exitModel then
-				-- Try to find the physical RootPart within the exit model
-				local exitPart = exitModel:FindFirstChild("RootPart")
-
-				if exitPart and exitPart:IsA("BasePart") then
-					self._isTeleporting = true
-
-					-- Calculate the new CFrame: Top of the exit part
-					-- We add half the exit part's height, plus ~3 studs to account for the player's height (R6/R15 safe)
-					local yOffset = (exitPart.Size.Y / 2) + 3
-					local targetCFrame = exitPart.CFrame * CFrame.new(0, yOffset, 0)
-
-					-- Use PivotTo for optimized and safe character movement
-					character:PivotTo(targetCFrame)
-
-					Teleporter.Used:Fire(teleporterName)
-
-					-- Short cooldown before this specific teleporter can be used by this client again
-					task.wait(0.5)
-					self._isTeleporting = false
-				else
-					warn(
-						"Teleporter failed: ExitModel found for '"
-							.. tostring(teleporterName)
-							.. "' but missing 'RootPart'"
-					)
-				end
-			else
-				warn("Teleporter failed: No ExitModel found for TeleporterName '" .. tostring(teleporterName) .. "'")
-			end
+		local humanoidRootPart = character:FindFirstChild("HumanoidRootPart")
+		if not humanoidRootPart then
+			return
 		end
+
+		-- LOCK the debounces IMMEDIATELY so no other touch events can sneak through
+		self._IsTeleporting = true
+		isGlobalTeleporting = true
+
+		TeleportingScreen.TeleportIn()
+			:andThen(function()
+				self:TeleportPlayer(character, baseName)
+			end)
+			:catch(function(err)
+				-- Safety catch: unlock if the promise fails for any reason
+				warn("TeleportIn Promise failed:", err)
+				self._IsTeleporting = false
+				isGlobalTeleporting = false
+			end)
 	end)
 end
 
+-- STREAMING_CHUNK:Handling the teleportation logic to the destination...
+function Teleporter:TeleportPlayer(character: Model, baseName: string)
+	local targetName = baseName .. "_TpOut"
+	local targetModel: Model? = nil
+
+	-- Find the matching Out-Teleporter using CollectionService tags
+	for _, inst: Instance in ipairs(CollectionService:GetTagged("Teleporter")) do
+		if inst.Name == targetName then
+			targetModel = inst :: Model
+			break
+		end
+	end
+
+	if targetModel and targetModel.PrimaryPart then
+		-- Calculate destination CFrame with a slight absolute Y offset to prevent getting stuck in the floor
+		local destCFrame = targetModel.PrimaryPart.CFrame + Vector3.new(0, 3, 0)
+
+		-- Prioritize pivot APIs for model movement as per modern Roblox standards
+		character:PivotTo(destCFrame)
+
+		-- Debounce reset after 1 second to prevent immediate re-teleportation or bouncing
+		task.delay(1, function()
+			self._IsTeleporting = false
+			isGlobalTeleporting = false
+		end)
+	else
+		warn("Could not find matching target teleporter: " .. targetName)
+
+		-- Make sure we unlock the player if the target was missing!
+		self._IsTeleporting = false
+		isGlobalTeleporting = false
+	end
+end
+
+-- STREAMING_CHUNK:Stop method for cleanup...
 function Teleporter:Stop()
-	-- Automatically cleans up our .Touched event connection
+	-- Clean up all events and states tied to this Trove
 	self._Trove:Clean()
 end
 

@@ -1,0 +1,12 @@
+[package]
+name = "daad/debugutil"
+version = "0.0.9"
+registry = "https://github.com/UpliftGames/wally-index"
+realm = "shared"
+authors = ["Jonas Hanström"]
+license = "MIT"
+
+exclude = ["**"]
+include = ["init.lua", "wally.lock", "wally.toml", "README.md"]
+
+[dependencies]

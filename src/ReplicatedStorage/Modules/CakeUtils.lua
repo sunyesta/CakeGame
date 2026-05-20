@@ -17,7 +17,6 @@ function CakeUtils.CreateCakeModel(cakeData: string): Model?
 	cakeModel.Name = "CakeModel"
 	cakeModel:AddTag("CakeModel")
 	cakeModel:SetAttribute("CakeData", cakeData)
-	cakeModel:AddTag("DragUpright")
 
 	-- We create an invisible PrimaryPart for the model.
 	-- This gives us a central point to weld to tools or pivot in the Workspace.
@@ -27,7 +26,7 @@ function CakeUtils.CreateCakeModel(cakeData: string): Model?
 	primaryPart.Size = Vector3.new(0.001, 0.001, 0.001)
 	primaryPart.Massless = true
 	primaryPart.CanCollide = false
-	primaryPart.Anchored = true
+	primaryPart.Anchored = false
 
 	-- Always parent instances at the very end for performance
 	primaryPart.Parent = cakeModel
