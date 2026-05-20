@@ -21,26 +21,6 @@ function Debug.new()
 				setupCharacter = false,
 			},
 		},
-		BillboardManager = {
-			enabled = false,
-			methods = {
-				init = true,
-				update = true,
-				create = false,
-			},
-		},
-		UIRootService = {
-			enabled = true,
-			methods = {
-				getOrCreateTargets = true,
-			},
-		},
-		InteractionUIFactory = {
-			enabled = true,
-			methods = {
-				createInfoFrame = true,
-			},
-		},
 		DragController = {
 			enabled = true,
 			methods = {
@@ -91,34 +71,6 @@ function Debug.new()
 			enabled = true,
 			methods = {
 				init = true,
-			},
-		},
-		MobileInputController = {
-			enabled = false,
-			methods = {
-				init = true,
-				InputBegan = true,
-				InputChanged = true,
-				InputEnded = true,
-			},
-		},
-		InteractionUIManager = {
-			enabled = true,
-			methods = {
-				init = true,
-				initDesktop = true,
-				initMobile = true,
-			},
-		},
-		MobileUIManager = {
-			enabled = true,
-			methods = {
-				new = true,
-				init = false,
-				getJumpButtonCenter = false,
-				getCircularButtonPosition = false,
-				calculateButtonPositions = false,
-				generateDebugButtons = false,
 			},
 		},
 	})

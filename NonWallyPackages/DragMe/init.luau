@@ -1,6 +1,3 @@
-local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local ClickDetector = require(ReplicatedStorage.NonWallyPackages.ClickDetector)
-local MouseTouch = require(ReplicatedStorage.NonWallyPackages.MouseTouch)
 --!strict
 -- DragMe Package Entry Point
 -- A secure, server-authoritative draggable parts system for Roblox
@@ -12,7 +9,7 @@ local DragMe = {}
 -- Lazy load client/server modules based on runtime context
 if RunService:IsClient() then
 	DragMe = require(script.client)
-	DragMe.InteractionState = require(script.client.InteractionState)
+	DragMe.State = require(script.client.State)
 elseif RunService:IsServer() then
 	require(script.server.InitRemotes)
 	DragMe = require(script.server)

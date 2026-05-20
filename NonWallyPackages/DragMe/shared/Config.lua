@@ -1,3 +1,4 @@
+local Enums = require(script.Parent.Parent.Enums)
 local Config = {
 
 	Debug = {
@@ -11,27 +12,17 @@ local Config = {
 	},
 	Drag = {
 		TAG = "Draggable",
-
-		-- The fixed distance from the camera an object is held at for mobile in first person mode.
-		FixedDragDistance = 11,
+		-- The distance in pixels from the edge of the screen that triggers camera panning.
+		ScreenEdgePanDistance = 300,
 
 		Mobile = {
-			-- The maximum time in seconds a touch can last to be considered a "tap".
-			MaxTapDuration = 0.1,
 
-			-- The maximum distance in pixels the finger can move to be considered a "tap".
-			MaxTapMoveDistance = 20,
-
-			-- The time in seconds a finger must be held still to trigger a hover.
-			HoverDelay = 0.3,
-
-			ThirdPersonDragDistance = 1, -- Forward/backward distance from the player.
-			ThirdPersonSidewaysOffset = 3, -- Right/left distance from the player.
-			ThirdPersonVerticalOffset = 4, -- Up/down distance from the player's center.
+			-- Whether edge panning is allowed while dragging on mobile/touch devices
+			EdgePanOnMobile = true,
 		},
 
 		Collision = {
-			Mode = "Dynamic",
+			Mode = Enums.CollisionModes.Dynamic,
 
 			DRAGGED_OBJECT_GROUP = "DragMeObjectGroup",
 			PLAYER_GROUP = "PlayerGroup",
@@ -40,6 +31,7 @@ local Config = {
 
 		-- The maximum distance (in studs) to search for draggable objects.
 		MaxDragDistance = 20,
+		DragDistanceMode = Enums.DragDistanceModes.Character,
 
 		-- Enables rigid body physics for draggable objects. When true, objects retain natural rotation and position during dragging, without forced alignment.
 		RigidBodyOrientation = true,
@@ -49,16 +41,8 @@ local Config = {
 		AlignResponsiveness = 40,
 	},
 
-	UI = {
-		-- BillboardGui appearance config
-		Billboard = {
-			Size = UDim2.new(3.5, 0, 3.5, 0), -- Default scale size
-			TextColor = Color3.fromRGB(255, 255, 255), -- Default white text
-			StrokeColor = Color3.fromRGB(0, 0, 0), -- Default black stroke
-
-			-- Set to true to keep the item billboard visible even while dragging.
-			ShowBillboardWhileDragging = false,
-		},
+	Welding = {
+		TAG = "Surface",
 	},
 }
 

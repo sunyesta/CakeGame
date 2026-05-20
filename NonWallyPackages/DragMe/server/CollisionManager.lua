@@ -3,6 +3,7 @@ local PhysicsService = game:GetService("PhysicsService")
 local Players = game:GetService("Players")
 local Config = require(script.Parent.Parent.shared.Config)
 local Debug = require(script.Parent.Parent.shared.Debug)
+local Enums = require(script.Parent.Parent.Enums)
 
 local CollisionManager = {}
 CollisionManager.__index = CollisionManager
@@ -28,7 +29,7 @@ function CollisionManager:init()
 
 	self:setupPlayerListeners()
 
-	if Config.Drag.Collision.Mode == "AlwaysThrough" then
+	if Config.Drag.Collision.Mode == Enums.CollisionModes.AlwaysThrough then
 		self:setupAlwaysThroughMode()
 	end
 end

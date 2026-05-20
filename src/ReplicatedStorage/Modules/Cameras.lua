@@ -1,6 +1,8 @@
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local SoundService = game:GetService("SoundService")
+local RunService = game:GetService("RunService")
+
 local Cinemachine = require(ReplicatedStorage.NonWallyPackages.Cinemachine)
 local PlayerUtils = require(ReplicatedStorage.NonWallyPackages.PlayerUtils)
 local GameEnums = require(ReplicatedStorage.Common.GameInfo.GameEnums)
@@ -14,7 +16,11 @@ local Player = Players.LocalPlayer
 
 local PlayerModule = require(Player.PlayerScripts:WaitForChild("PlayerModule"))
 local Property = require(ReplicatedStorage.NonWallyPackages.Property)
+local DragMe = require(ReplicatedStorage.NonWallyPackages.DragMe)
 local Controls = PlayerModule:GetControls()
+
+-- The maximum speed the camera will pivot (in radians per second)
+local MAX_PAN_SPEED = math.rad(90)
 
 function GetBoundingBox(root: Instance): (CFrame, Vector3)
 	-- If it's a Model, use the built-in optimized engine method
@@ -36,14 +42,18 @@ function GetBoundingBox(root: Instance): (CFrame, Vector3)
 			local cf = descendant.CFrame
 
 			-- Check all 8 corners of the part to find absolute world bounds
-			-- (Simplified version: using the axis-aligned extents)
 			local halfSize = size / 2
 			local corners = {
 				cf * Vector3.new(halfSize.X, halfSize.Y, halfSize.Z),
 				cf * Vector3.new(-halfSize.X, -halfSize.Y, -halfSize.Z),
+				cf * Vector3.new(halfSize.X, -halfSize.Y, halfSize.Z),
+				cf * Vector3.new(-halfSize.X, halfSize.Y, halfSize.Z),
+				cf * Vector3.new(halfSize.X, halfSize.Y, -halfSize.Z),
+				cf * Vector3.new(-halfSize.X, -halfSize.Y, -halfSize.Z),
+				cf * Vector3.new(halfSize.X, -halfSize.Y, -halfSize.Z),
+				cf * Vector3.new(-halfSize.X, halfSize.Y, -halfSize.Z),
 			}
 
-			-- This is a basic AABB (Axis-Aligned Bounding Box) calculation
 			for _, corner in corners do
 				minX = math.min(minX, corner.X)
 				minY = math.min(minY, corner.Y)
@@ -100,15 +110,22 @@ function PlayerCamera()
 			end)
 		end))
 
-		activeTrove:Add(playerCamera.Props.FreezeCamera:Observe(function(freezeCamera)
-			if freezeCamera then
+		-- Combine the logic for Props.FreezeCamera and DragMe.State.FreezeCameraControls
+		local function UpdateCameraFreeze()
+			local freezeProps = playerCamera.Props.FreezeCamera:Get()
+			local freezeDragMe = DragMe.State.FreezeCameraControls:Get()
+
+			if freezeProps or freezeDragMe then
 				playerCamera.Body.RotationControlEnabled = false
 				playerCamera.Body.ZoomControlEnabled = false
 			else
 				playerCamera.Body.RotationControlEnabled = true
 				playerCamera.Body.ZoomControlEnabled = true
 			end
-		end))
+		end
+
+		activeTrove:Add(playerCamera.Props.FreezeCamera:Observe(UpdateCameraFreeze))
+		activeTrove:Add(DragMe.State.FreezeCameraControls:Observe(UpdateCameraFreeze))
 	end)
 
 	playerCamera.Body.RotatePlayerWithShiftlock = true
@@ -116,16 +133,12 @@ function PlayerCamera()
 	return playerCamera
 end
 
--- TODO make the cake camera in the left side and center the cake, not the plate.
 function CakeCamera()
 	local cakeCamera = Cinemachine.VirtualCamera.new("CakeCamera")
 	cakeCamera.Priority = GameEnums.CameraPriorities.Off
 	Cinemachine.Brain:RefreshPriority()
 	cakeCamera.Props = {}
 
-	-- cakeCamera.Lens.FieldOfView = 40
-
-	-- The Body component (RobloxControlCamera) is what handles positioning and offsets
 	cakeCamera.Body = Cinemachine.Components.Trackball.new({
 		StartDistance = 6,
 		MinDistance = 4,
@@ -137,8 +150,6 @@ function CakeCamera()
 		MouseLock = false,
 		ZoomLock = false,
 		Sensitivity = Vector2.new(0.005, 0.005),
-		-- YLimit = { Min = 0.1, Max = 1.0 },
-		-- FadeCharacter = false, -- The player isn't the focus, so disable this.
 	})
 
 	Cinemachine.Brain:Register(cakeCamera)
@@ -146,7 +157,6 @@ function CakeCamera()
 	local CakeBuildPlatform = workspace:WaitForChild("CakeDecoratorArea"):WaitForChild("CakeBuildPlatform")
 	local ModelEditorModels = workspace:WaitForChild("ModelEditorModels")
 
-	print(cakeCamera._IsActive)
 	cakeCamera:Observe(function(activeTrove)
 		Controls:Disable()
 
@@ -159,13 +169,11 @@ function CakeCamera()
 			local yPos = math.round(boundingBox.Y)
 			cakeCamera.Follow =
 				Vector3.new(CakeBuildPlatform.Position.X, CakeBuildPlatform.Position.Y, CakeBuildPlatform.Position.Z)
-			-- PointVisualizer.new(cakeCamera.Follow)
 		end
 
 		OnWorkspaceChanged()
 		activeTrove:Add(ModelEditorController.WorkspaceChanged:Connect(OnWorkspaceChanged))
 
-		activeTrove:Add(ModelEditorController.WorkspaceChanged:Connect(OnWorkspaceChanged))
 		activeTrove:Add(ModelEditorController.FreezeCamera:Observe(function(freezeCamera)
 			if freezeCamera then
 				cakeCamera.Body.RotationControlEnabled = false

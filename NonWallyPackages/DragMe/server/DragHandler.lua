@@ -4,6 +4,7 @@ local RemotesFolder = ReplicatedStorage:WaitForChild("DragMe"):WaitForChild("Rem
 local Config = require(script.Parent.Parent.shared.Config)
 local DragRequestRemote = RemotesFolder:WaitForChild("DragRequest")
 local Debug = require(script.Parent.Parent.shared.Debug)
+local Enums = require(script.Parent.Parent.Enums)
 
 local DragHandler = {}
 DragHandler.__index = DragHandler
@@ -51,6 +52,126 @@ function DragHandler:setCollisionGroupForObject(object, groupName)
 	end
 end
 
+-- ==========================================
+-- WELDING LOGIC
+-- ==========================================
+
+function DragHandler:removeSurfaceWelds(object)
+	if not object then
+		return
+	end
+
+	-- Check direct children
+	if object:IsA("BasePart") then
+		for _, child in ipairs(object:GetChildren()) do
+			if child:IsA("WeldConstraint") and child.Name == "DragMeWeld" then
+				child:Destroy()
+			end
+		end
+	end
+
+	-- Check descendants (useful if it's a Model)
+	for _, desc in ipairs(object:GetDescendants()) do
+		if desc:IsA("WeldConstraint") and desc.Name == "DragMeWeld" then
+			desc:Destroy()
+		end
+	end
+end
+
+function DragHandler:createSurfaceWeld(surfacePart, object, networkPart)
+	self:removeSurfaceWelds(object) -- Ensure no duplicate welds exist
+
+	local weld = Instance.new("WeldConstraint")
+	weld.Name = "DragMeWeld"
+	weld.Part0 = surfacePart
+	weld.Part1 = networkPart
+	weld.Parent = networkPart
+
+	Debug:print("Welded object to surface:", surfacePart:GetFullName())
+	return true
+end
+
+function DragHandler:handleSurfaceWelding(object, networkPart)
+	local partsToCheck = {}
+	if object:IsA("BasePart") then
+		table.insert(partsToCheck, object)
+	end
+	for _, descendant in ipairs(object:GetDescendants()) do
+		if descendant:IsA("BasePart") then
+			table.insert(partsToCheck, descendant)
+		end
+	end
+
+	local surfaceTag = Config.Welding.TAG
+	local taggedSurfaces = CollectionService:GetTagged(surfaceTag)
+
+	-- 1. Check for immediate overlaps or if hovering slightly above a surface
+	if #taggedSurfaces > 0 then
+		local overlapParams = OverlapParams.new()
+		overlapParams.FilterType = Enum.RaycastFilterType.Include
+		overlapParams.FilterDescendantsInstances = taggedSurfaces
+
+		local raycastParams = RaycastParams.new()
+		raycastParams.FilterType = Enum.RaycastFilterType.Include
+		raycastParams.FilterDescendantsInstances = taggedSurfaces
+
+		for _, part in ipairs(partsToCheck) do
+			-- A. Spatial Query (is it currently touching the surface?)
+			local touching = workspace:GetPartsInPart(part, overlapParams)
+			for _, hitPart in ipairs(touching) do
+				if CollectionService:HasTag(hitPart, surfaceTag) then
+					return self:createSurfaceWeld(hitPart, object, networkPart)
+				end
+			end
+
+			-- B. Blockcast (is it slightly hovering over the surface?)
+			-- FIX: Removed the standalone '1' parameter. The distance is built into the Direction Vector!
+			local result = workspace:Blockcast(part.CFrame, part.Size, Vector3.new(0, -1, 0), raycastParams)
+			if result and CollectionService:HasTag(result.Instance, surfaceTag) then
+				return self:createSurfaceWeld(result.Instance, object, networkPart)
+			end
+		end
+	end
+
+	-- 2. Fallback: The part was dropped and is still falling in the air.
+	-- We temporarily listen for .Touched to weld it upon landing.
+	local connections = {}
+	local resolved = false
+
+	local function onTouch(hitPart)
+		if resolved then
+			return
+		end
+		if CollectionService:HasTag(hitPart, surfaceTag) then
+			resolved = true
+			self:createSurfaceWeld(hitPart, object, networkPart)
+
+			-- Cleanup listeners once welded
+			for _, conn in ipairs(connections) do
+				conn:Disconnect()
+			end
+		end
+	end
+
+	for _, part in ipairs(partsToCheck) do
+		table.insert(connections, part.Touched:Connect(onTouch))
+	end
+
+	-- Prevent memory leaks: clean up the listeners if the part never hits a surface
+	task.delay(OWNERSHIP_RETURN_DELAY + 2, function()
+		resolved = true
+		for _, conn in ipairs(connections) do
+			conn:Disconnect()
+		end
+	end)
+
+	return false
+end
+
+-- ==========================================
+-- REQUEST HANDLING
+-- ==========================================
+
 function DragHandler:handlePickupRequest(player, object, networkPart)
 	local playerCharacter = player.Character
 	if not playerCharacter or not playerCharacter.PrimaryPart then
@@ -58,12 +179,18 @@ function DragHandler:handlePickupRequest(player, object, networkPart)
 		return false
 	end
 
-	local maxAllowedDistance = Config.Drag.MaxDragDistance
-	local distance = (playerCharacter.PrimaryPart.Position - networkPart.Position).Magnitude
+	-- UNWELD: Free the object from the surface
+	self:removeSurfaceWelds(object)
 
-	if distance > maxAllowedDistance then
-		Debug:warn("Player", player.Name, "is too far to pick up object")
-		return false
+	-- Only enforce server-side distance strictness if the mode is Character.
+	if Config.Drag.DragDistanceMode == "Character" then
+		local maxAllowedDistance = Config.Drag.MaxDragDistance
+		local distance = (playerCharacter.PrimaryPart.Position - networkPart.Position).Magnitude
+
+		if distance > maxAllowedDistance then
+			Debug:warn("Player", player.Name, "is too far to pick up object")
+			return false
+		end
 	end
 
 	if not CollectionService:HasTag(object, Config.Drag.TAG) then
@@ -90,7 +217,7 @@ function DragHandler:handlePickupRequest(player, object, networkPart)
 
 	networkPart:SetNetworkOwner(player)
 
-	if Config.Drag.Collision.Mode == "Dynamic" then
+	if Config.Drag.Collision.Mode == Enums.CollisionModes.Dynamic then
 		self:setCollisionGroupForObject(object, Config.Drag.Collision.DRAGGED_OBJECT_GROUP)
 	end
 
@@ -139,27 +266,16 @@ function DragHandler:handleDropRequest(player, object, networkPart)
 	-- 1. Immediately release logical drag status so others can pick it up.
 	object:SetAttribute("IsBeingDraggedBy", nil)
 
-	-- 2. Restore the collision group immediately. The part now collides with
-	--    the world again, but the dropping client still owns physics so they
-	--    simulate the tumble/fall locally with zero stutter.
-	--
-	--    NOTE: the "fall through world" bug that motivated changing this was
-	--    actually caused by velocity carry-over on the client when the drag
-	--    constraints disabled. That's fixed in DragController:drop() by
-	--    zeroing AssemblyLinearVelocity / AssemblyAngularVelocity before
-	--    releasing the constraints. With that fix in place it's safe to keep
-	--    the delayed ownership return here.
-	if Config.Drag.Collision.Mode == "Dynamic" then
+	-- 2. Restore the collision group immediately.
+	if Config.Drag.Collision.Mode == Enums.CollisionModes.Dynamic then
 		self:resetCollisionGroupForObject(object)
 	end
 
-	-- 3. Defer network ownership return. This gives the dropping client time
-	--    to simulate the falling/tumbling physics locally before the server
-	--    takes over, avoiding the mid-air freeze you'd see from an instant
-	--    ownership swap.
+	-- 3. Check for Surface welding (handles currently touching & falling)
+	self:handleSurfaceWelding(object, networkPart)
+
+	-- 4. Defer network ownership return.
 	task.delay(OWNERSHIP_RETURN_DELAY, function()
-		-- Re-verify state: another player may have picked it up, or the part
-		-- may have been destroyed in the meantime.
 		if object:GetAttribute("IsBeingDraggedBy") then
 			Debug:print("Skipping ownership return - object was picked up again:", object:GetFullName())
 			return
@@ -193,6 +309,9 @@ function DragHandler:resetPart(object)
 		return
 	end
 
+	-- Remove any surface welds upon a hard reset
+	self:removeSurfaceWelds(object)
+
 	local isBeingDragged = object:GetAttribute("IsBeingDraggedBy")
 	if not isBeingDragged then
 		Debug:print("resetPart: Skipping reset, IsBeingDraggedBy is not set for", object:GetFullName())
@@ -206,7 +325,7 @@ function DragHandler:resetPart(object)
 	object:SetAttribute("IsBeingDraggedBy", nil)
 
 	-- Reset collision group
-	if Config.Drag.Collision.Mode == "Dynamic" then
+	if Config.Drag.Collision.Mode == Enums.CollisionModes.Dynamic then
 		Debug:print("Resetting collision group for", object:GetFullName())
 		self:resetCollisionGroupForObject(object)
 	end
