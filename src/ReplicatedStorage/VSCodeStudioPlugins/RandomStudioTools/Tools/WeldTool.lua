@@ -29,17 +29,17 @@ function WeldTool.Create(): CanvasGroup
 	listLayout.HorizontalAlignment = Enum.HorizontalAlignment.Center
 	listLayout.Parent = body
 
-	-- 2. Create the Constraint Type Toggle using the MultiSelect Constructor!
+	-- 2. Create the Constraint Type Toggle
 	local constraintOptions = {
-		{ Label = "Weld", Value = "Weld" },
+		{ Label = "WeldConstraint", Value = "WeldConstraint" },
 		{ Label = "Motor6D", Value = "Motor6D" },
 	}
 
 	local typeContainer, typeChangeEvent =
-		Constructors.CreateMultiSelect(1, "Constraint Types", constraintOptions, { "Weld" })
+		Constructors.CreateMultiSelect(1, "Constraint Types", constraintOptions, { "WeldConstraint" })
 	typeContainer.Parent = body
 
-	local activeConstraints = { "Weld" }
+	local activeConstraints = { "WeldConstraint" }
 
 	-- Update state whenever the user toggles a chip in the UI
 	typeChangeEvent.Event:Connect(function(selectedArray)
@@ -84,7 +84,7 @@ function WeldTool.Create(): CanvasGroup
 	cancelBtn.Font = Enum.Font.BuilderSansMedium
 	cancelBtn.TextSize = 14
 	cancelBtn.LayoutOrder = 4
-	cancelBtn.Visible = false -- Hidden until we enter step 2
+	cancelBtn.Visible = false
 
 	local cancelCorner = Instance.new("UICorner")
 	cancelCorner.CornerRadius = UDim.new(0, 12)
@@ -118,7 +118,6 @@ function WeldTool.Create(): CanvasGroup
 		end
 
 		if step == 1 then
-			-- Step 1: Assigning Part0
 			if #selectedParts ~= 1 then
 				warn("[Random Studio Tools] Please select exactly ONE BasePart to be the Part0.")
 				statusLabel.Text = "Need exactly 1 Part0!"
@@ -139,7 +138,6 @@ function WeldTool.Create(): CanvasGroup
 			statusLabel.TextColor3 = THEME.Blue
 			cancelBtn.Visible = true
 		elseif step == 2 then
-			-- Step 2: Assigning Part1s and executing
 			if not part0 then
 				resetTool()
 				return
@@ -150,9 +148,8 @@ function WeldTool.Create(): CanvasGroup
 				return
 			end
 
-			-- Guard in case they deselected all multiselect options
 			if #activeConstraints == 0 then
-				warn("[Random Studio Tools] Please select at least one constraint type (Weld or Motor6D).")
+				warn("[Random Studio Tools] Please select at least one constraint type.")
 				statusLabel.Text = "Select a constraint type!"
 				statusLabel.TextColor3 = THEME.Orange
 				task.delay(2, function()
@@ -169,34 +166,30 @@ function WeldTool.Create(): CanvasGroup
 			local successCount = 0
 
 			for _, part1 in ipairs(selectedParts) do
-				-- Prevent welding a part to itself
 				if part1 ~= part0 then
-					-- Loop through the active constraints array to make all selected constraint types
 					for _, constraintType in ipairs(activeConstraints) do
-						local joint: JointInstance
+						local joint: Instance
 
 						if constraintType == "Motor6D" then
-							joint = Instance.new("Motor6D")
+							local motor = Instance.new("Motor6D")
+							-- Motor6D requires C0/C1
+							local jointWorldCFrame = part1:GetPivot()
+							motor.C0 = part0.CFrame:ToObjectSpace(jointWorldCFrame)
+							motor.C1 = part1.CFrame:ToObjectSpace(jointWorldCFrame)
+							motor.Part0 = part0
+							motor.Part1 = part1
+							motor.Parent = part1
+							joint = motor
 						else
-							joint = Instance.new("Weld")
+							-- WeldConstraint handles position automatically!
+							local weld = Instance.new("WeldConstraint")
+							weld.Part0 = part0
+							weld.Part1 = part1
+							weld.Parent = part0
+							joint = weld
 						end
 
 						joint.Name = constraintType .. "_" .. part1.Name
-
-						local jointWorldCFrame = part1:GetPivot()
-
-						joint.C0 = part0.CFrame:ToObjectSpace(jointWorldCFrame)
-						joint.C1 = part1.CFrame:ToObjectSpace(jointWorldCFrame)
-
-						joint.Part0 = part0
-						joint.Part1 = part1
-
-						if constraintType == "Motor6D" then
-							joint.Parent = part1
-						else
-							joint.Parent = part0
-						end
-
 						successCount += 1
 					end
 				end
@@ -204,7 +197,6 @@ function WeldTool.Create(): CanvasGroup
 
 			ChangeHistoryService:SetWaypoint("AfterWeldToolExecution")
 
-			-- UI Feedback
 			if successCount > 0 then
 				statusLabel.Text = string.format("Successfully created %d joint(s)!", successCount)
 				statusLabel.TextColor3 = THEME.Emerald
@@ -216,7 +208,6 @@ function WeldTool.Create(): CanvasGroup
 			okBtn.Visible = false
 			cancelBtn.Visible = false
 
-			-- Reset tool after 2 seconds
 			task.delay(2, function()
 				resetTool()
 			end)

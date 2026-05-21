@@ -1,4 +1,6 @@
 -- DebugUtil.lua
+local DebugOn = false
+
 local DebugUtil = {}
 local instance = nil
 
@@ -112,17 +114,19 @@ local function joinArgs(...)
 end
 
 function DebugUtil.print(...)
-	local args = { ... }
-	local stackLevel, packageName = getStackLevelAndPackage(args)
-	local moduleName = getModuleName(stackLevel)
-	local methodName = getMethodName(stackLevel)
+	if DebugOn then
+		local args = { ... }
+		local stackLevel, packageName = getStackLevelAndPackage(args)
+		local moduleName = getModuleName(stackLevel)
+		local methodName = getMethodName(stackLevel)
 
-	if not isLoggingEnabled(packageName, moduleName, methodName) then
-		return
+		if not isLoggingEnabled(packageName, moduleName, methodName) then
+			return
+		end
+		local msg = joinArgs(table.unpack(args, 2))
+		local pkgStr = packageName and ("[" .. packageName .. "] ") or ""
+		print(("[DEBUG] %s[%s] [%s] %s - %s"):format(pkgStr, moduleName, methodName, msg, getCallLocation(stackLevel)))
 	end
-	local msg = joinArgs(table.unpack(args, 2))
-	local pkgStr = packageName and ("[" .. packageName .. "] ") or ""
-	print(("[DEBUG] %s[%s] [%s] %s - %s"):format(pkgStr, moduleName, methodName, msg, getCallLocation(stackLevel)))
 end
 
 function DebugUtil.warn(...)

@@ -131,4 +131,19 @@ function WeldUtils.IsAttachedToAnchoredPart(part, onlyWelds)
 	return anchoredPart
 end
 
+function WeldUtils.GetJoints(part, recursive)
+	if not recursive then
+		return part:GetJoints()
+	else
+		local joints = {}
+
+		for _, connectedPart in part:GetConnectedParts(true) do
+			for _, joint in connectedPart:GetJoints() do
+				joints[joint] = true
+			end
+		end
+		return TableUtil.Keys(joints)
+	end
+end
+
 return WeldUtils

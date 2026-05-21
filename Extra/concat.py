@@ -156,7 +156,8 @@ if __name__ == "__main__":
         # r"C:\Users\Mary\Documents\roblox game dev\CakeGame\src\ReplicatedStorage\Modules\ModelEditorController\Modules\CustomMaterial",
         # r"C:\Users\Mary\Documents\roblox game dev\CakeGame\src\ReplicatedStorage\Components\GUIs\CakeDecoratorGui\ColorTab.lua",
         # r"C:\Users\Mary\Documents\roblox game dev\CakeGame\NonWallyPackages\Cinemachine",
-        r"C:\Users\Mary\Documents\roblox game dev\CakeGame\NonWallyPackages\DragMe",
+        # r"C:\Users\Mary\Documents\roblox game dev\CakeGame\NonWallyPackages\DragMe",
+        r"C:\Users\Mary\Documents\roblox game dev\CakeGame\NonWallyPackages\PhysicsDrag",
         # r"C:\Users\Mary\Documents\roblox game dev\CakeGame\NonWallyPackages\ClickDetector.lua",
         # r"C:\Users\Mary\Documents\roblox game dev\CakeGame\NonWallyPackages\MouseTouch.lua",
     ]

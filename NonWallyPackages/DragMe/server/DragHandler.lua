@@ -5,6 +5,8 @@ local Config = require(script.Parent.Parent.shared.Config)
 local DragRequestRemote = RemotesFolder:WaitForChild("DragRequest")
 local Debug = require(script.Parent.Parent.shared.Debug)
 local Enums = require(script.Parent.Parent.Enums)
+local TableUtil = require(ReplicatedStorage.Packages.TableUtil)
+local WeldUtils = require(ReplicatedStorage.NonWallyPackages.WeldUtils)
 
 local DragHandler = {}
 DragHandler.__index = DragHandler
@@ -39,41 +41,127 @@ function DragHandler:setCollisionGroupForObject(object, groupName)
 		return
 	end
 
-	if object:IsA("BasePart") then
-		Debug:print(string.format("Setting CollisionGroup for %s to %s", object:GetFullName(), groupName))
-		object.CollisionGroup = groupName
+	local processedParts = {}
+
+	local function applyGroupToAssembly(basePart)
+		-- GetConnectedParts returns an array of all parts rigidly connected, including itself.
+		for _, part in ipairs(basePart:GetConnectedParts(true)) do
+			if not processedParts[part] then
+				processedParts[part] = true
+				Debug:print(
+					string.format("Setting CollisionGroup for connected part %s to %s", part:GetFullName(), groupName)
+				)
+				part.CollisionGroup = groupName
+			end
+		end
 	end
 
-	for _, part in ipairs(object:GetDescendants()) do
-		if part:IsA("BasePart") then
-			Debug:print(string.format("Setting CollisionGroup for descendant %s to %s", part:GetFullName(), groupName))
-			part.CollisionGroup = groupName
+	if object:IsA("BasePart") then
+		applyGroupToAssembly(object)
+	end
+
+	for _, descendant in ipairs(object:GetDescendants()) do
+		if descendant:IsA("BasePart") and not processedParts[descendant] then
+			applyGroupToAssembly(descendant)
 		end
 	end
 end
 
--- ==========================================
--- WELDING LOGIC
--- ==========================================
+function DragHandler:GetBaseOfWeldStack(startingPart: BasePart): BasePart
+	if not startingPart then
+		return nil
+	end
+
+	local visited = { [startingPart] = true }
+	local queue = { startingPart }
+	local currentBase = startingPart
+
+	--[[ STREAMING_CHUNK:Implementing the Breadth-First Search loop ]]
+	-- We use a while loop to traverse the weld graph.
+	-- We specifically look for joints where the current part is 'Part1',
+	-- as Part0 is considered the "parent" in Roblox weld logic.
+	while #queue > 0 do
+		local currentPart = table.remove(queue, 1)
+		local joints = currentPart:GetJoints()
+
+		for _, joint in ipairs(joints) do
+			-- Check if the current part is the child (Part1) and
+			-- there is a parent (Part0) we haven't visited yet.
+			if joint.Part1 == currentPart and joint.Part0 then
+				if not visited[joint.Part0] then
+					visited[joint.Part0] = true
+					table.insert(queue, joint.Part0)
+
+					-- Update the potential base
+					currentBase = joint.Part0
+				end
+				-- Handle reverse cases if necessary, but usually Part1 -> Part0 is the chain
+			elseif joint.Part0 == currentPart and joint.Part1 then
+				-- This case is rare for "stacks" but good for safety
+			end
+		end
+	end
+
+	return currentBase
+end
+
+function DragHandler:_GetDragMeWelds(part: BasePart): { WeldConstraint }
+	local foundWelds: { WeldConstraint } = {}
+	local queue: { BasePart } = { part }
+	local visited: { [BasePart]: boolean } = { [part] = true }
+
+	while #queue > 0 do
+		-- Remove the first item from the queue to process it
+		local currentPart = table.remove(queue, 1) :: BasePart
+
+		-- GetConstraints() is more efficient than checking all children of the part.
+		-- It returns an array of all Constraint objects attached to this part.
+		for _, constraint in currentPart:GetJoints() do
+			-- Ensure we are only looking at WeldConstraints
+			if constraint:IsA("WeldConstraint") then
+				-- Strict rule: Only traverse from Part1 to Part0
+				if constraint.Part1 == currentPart then
+					-- Check if this is the weld we are looking for
+					if constraint.Name == "DragMeWeld" then
+						table.insert(foundWelds, constraint)
+					end
+
+					-- Add the next part to the queue to continue the search
+					local nextPart = constraint.Part0
+					if nextPart and not visited[nextPart] then
+						visited[nextPart] = true
+						table.insert(queue, nextPart)
+					end
+				end
+			end
+		end
+	end
+
+	return foundWelds
+end
 
 function DragHandler:removeSurfaceWelds(object)
 	if not object then
 		return
 	end
 
+	local function breakJoints(part)
+		local dragMeWelds = self:_GetDragMeWelds(part)
+		print(part, "welded to", dragMeWelds)
+		for _, weld in dragMeWelds do
+			weld:Destroy()
+		end
+	end
+
 	-- Check direct children
 	if object:IsA("BasePart") then
-		for _, child in ipairs(object:GetChildren()) do
-			if child:IsA("WeldConstraint") and child.Name == "DragMeWeld" then
-				child:Destroy()
-			end
-		end
+		breakJoints(object)
 	end
 
 	-- Check descendants (useful if it's a Model)
 	for _, desc in ipairs(object:GetDescendants()) do
-		if desc:IsA("WeldConstraint") and desc.Name == "DragMeWeld" then
-			desc:Destroy()
+		if desc:IsA("BasePart") then
+			breakJoints(desc)
 		end
 	end
 end
@@ -84,8 +172,8 @@ function DragHandler:createSurfaceWeld(surfacePart, object, networkPart)
 	local weld = Instance.new("WeldConstraint")
 	weld.Name = "DragMeWeld"
 	weld.Part0 = surfacePart
-	weld.Part1 = networkPart
-	weld.Parent = networkPart
+	weld.Part1 = DragHandler:GetBaseOfWeldStack(networkPart)
+	weld.Parent = weld.Part1
 
 	Debug:print("Welded object to surface:", surfacePart:GetFullName())
 	return true
@@ -125,7 +213,6 @@ function DragHandler:handleSurfaceWelding(object, networkPart)
 			end
 
 			-- B. Blockcast (is it slightly hovering over the surface?)
-			-- FIX: Removed the standalone '1' parameter. The distance is built into the Direction Vector!
 			local result = workspace:Blockcast(part.CFrame, part.Size, Vector3.new(0, -1, 0), raycastParams)
 			if result and CollectionService:HasTag(result.Instance, surfaceTag) then
 				return self:createSurfaceWeld(result.Instance, object, networkPart)
@@ -215,11 +302,12 @@ function DragHandler:handlePickupRequest(player, object, networkPart)
 		end
 	end
 
-	networkPart:SetNetworkOwner(player)
-
+	-- FIX: Apply collision groups BEFORE handing off network ownership to prevent client-side physics fling
 	if Config.Drag.Collision.Mode == Enums.CollisionModes.Dynamic then
 		self:setCollisionGroupForObject(object, Config.Drag.Collision.DRAGGED_OBJECT_GROUP)
 	end
+
+	networkPart:SetNetworkOwner(player)
 
 	return true
 end

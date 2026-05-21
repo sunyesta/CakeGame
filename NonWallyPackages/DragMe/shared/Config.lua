@@ -26,7 +26,7 @@ local Config = {
 
 			DRAGGED_OBJECT_GROUP = "DragMeObjectGroup",
 			PLAYER_GROUP = "PlayerGroup",
-			DEFAULT_GROUP = "DragMeDefaultGroup",
+			DEFAULT_GROUP = "DragMeDefaultGroup", -- group object is assigned to while it's being dragged
 		},
 
 		-- The maximum distance (in studs) to search for draggable objects.

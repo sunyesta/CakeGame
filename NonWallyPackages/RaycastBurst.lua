@@ -40,12 +40,12 @@ function RaycastBurst.fromGoldenRatio(origin, radius, rayCount, raycastParams, v
 	assert(rayCount >= 6, "at least 6 rays minimum")
 
 	local directions = {
-		Vector3.new(-1, 0, 0),
-		Vector3.new(1, 0, 0),
-		Vector3.new(0, -1, 0),
-		Vector3.new(0, 1, 0),
-		Vector3.new(0, 0, -1),
-		Vector3.new(0, 0, 1),
+		Vector3.new(-1, 0, 0) * radius,
+		Vector3.new(1, 0, 0) * radius,
+		Vector3.new(0, -1, 0) * radius,
+		Vector3.new(0, 1, 0) * radius,
+		Vector3.new(0, 0, -1) * radius,
+		Vector3.new(0, 0, 1) * radius,
 	}
 	for i = 1, rayCount - 6 do
 		table.insert(directions, calculateDirection(i, rayCount, GOLDEN_RATIO) * radius)

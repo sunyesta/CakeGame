@@ -1,5 +1,7 @@
 local DebugUtil = require(script.Parent.Parent.DebugUtil)
 
+local debugOn = false
+
 local Debug = {}
 Debug.__index = Debug
 
@@ -85,15 +87,21 @@ function Debug.getInstance(config)
 end
 
 function Debug:print(...)
-	DebugUtil.print(self.prefix, ...)
+	if debugOn then
+		DebugUtil.print(self.prefix, ...)
+	end
 end
 
 function Debug:warn(...)
-	DebugUtil.warn(self.prefix, ...)
+	if debugOn then
+		DebugUtil.warn(self.prefix, ...)
+	end
 end
 
 function Debug:error(...)
-	DebugUtil.error(self.prefix, ...)
+	if debugOn then
+		DebugUtil.error(self.prefix, ...)
+	end
 end
 
 return Debug.getInstance()
