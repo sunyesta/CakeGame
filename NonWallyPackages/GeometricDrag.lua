@@ -60,8 +60,7 @@ function GeometricDrag:StartDrag()
 	local params = RaycastParams.new()
 	params.FilterType = Enum.RaycastFilterType.Include
 	-- Ensure we raycast against the entire model to find exactly what was clicked
-	local model = self._Part:FindFirstAncestorWhichIsA("Model") or self._Part
-	params.FilterDescendantsInstances = { model }
+	params.FilterDescendantsInstances = self._Part:GetConnectedParts(true)
 
 	local hit = workspace:Raycast(mouseRay.Origin, mouseRay.Direction * 2000, params)
 	-- If we missed (rare, but possible), fallback to pivot
@@ -76,7 +75,8 @@ function GeometricDrag:StartDrag()
 
 	-- move model to desired cframe
 	local desiredCFrame = self._Part:GetPivot()
-	self._DragTrove:Add(RunService.RenderStepped:Connect(function()
+
+	local function dragStep()
 		-- 4. Calculate Virtual Mouse Position on the Plane
 		local currentRay = self._MouseTouch:GetRay()
 
@@ -112,7 +112,10 @@ function GeometricDrag:StartDrag()
 			-- Update the part's position with Lerp
 			self._Part:PivotTo(self._Part:GetPivot():Lerp(desiredCFrame, 0.3))
 		end
-	end))
+	end
+
+	dragStep()
+	self._DragTrove:Add(RunService.RenderStepped:Connect(dragStep))
 
 	self.DragStart:Fire()
 end

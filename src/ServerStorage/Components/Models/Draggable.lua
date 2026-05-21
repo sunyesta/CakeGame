@@ -6,13 +6,12 @@ local ServerComm = require(ReplicatedStorage.Packages.Comm).ServerComm
 local PhysicsDrag = require(ReplicatedStorage.NonWallyPackages.PhysicsDrag)
 
 local Draggable = Component.new({
-	Tag = "Draggable1",
+	Tag = "Draggable",
 	Ancestors = { Workspace },
 })
 
 function Draggable:Construct()
 	self._Trove = Trove.new()
-	self._Comm = self._Trove:Add(ServerComm.new(self.Instance, "_Comm"))
 
 	self._Trove:Add(PhysicsDrag.CreateDragHandler(self.Instance.PrimaryPart))
 end

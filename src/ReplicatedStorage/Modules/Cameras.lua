@@ -16,7 +16,6 @@ local Player = Players.LocalPlayer
 
 local PlayerModule = require(Player.PlayerScripts:WaitForChild("PlayerModule"))
 local Property = require(ReplicatedStorage.NonWallyPackages.Property)
-local DragMe = require(ReplicatedStorage.NonWallyPackages.DragMe)
 local Controls = PlayerModule:GetControls()
 
 -- The maximum speed the camera will pivot (in radians per second)
@@ -110,12 +109,10 @@ function PlayerCamera()
 			end)
 		end))
 
-		-- Combine the logic for Props.FreezeCamera and DragMe.State.FreezeCameraControls
 		local function UpdateCameraFreeze()
 			local freezeProps = playerCamera.Props.FreezeCamera:Get()
-			local freezeDragMe = DragMe.State.FreezeCameraControls:Get()
 
-			if freezeProps or freezeDragMe then
+			if freezeProps then
 				playerCamera.Body.RotationControlEnabled = false
 				playerCamera.Body.ZoomControlEnabled = false
 			else
@@ -125,7 +122,6 @@ function PlayerCamera()
 		end
 
 		activeTrove:Add(playerCamera.Props.FreezeCamera:Observe(UpdateCameraFreeze))
-		activeTrove:Add(DragMe.State.FreezeCameraControls:Observe(UpdateCameraFreeze))
 	end)
 
 	playerCamera.Body.RotatePlayerWithShiftlock = true

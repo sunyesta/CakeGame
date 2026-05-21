@@ -25,7 +25,7 @@ function CakeModel:Construct()
 	-- We bind the sound to the Cake itself now
 	self.EatingSound = SoundUtils.MakeSound("rbxassetid://103412029437228", self.Instance)
 	self.Instance:AddTag("Draggable")
-	self.Instance:AddTag("DragUpright")
+	-- self.Instance:AddTag("DragUpright")
 end
 
 function CakeModel:Start()

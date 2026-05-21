@@ -7,10 +7,7 @@ local UserInputService = game:GetService("UserInputService")
 
 local Component = require(ReplicatedStorage.Packages.Component)
 local Trove = require(ReplicatedStorage.Packages.Trove)
-local Streamable = require(ReplicatedStorage.Packages.Streamable).Streamable
-local ClientComm = require(ReplicatedStorage.Packages.Comm).ClientComm
 local ClickDetector = require(ReplicatedStorage.NonWallyPackages.ClickDetector)
-local GeometricDrag = require(ReplicatedStorage.NonWallyPackages.GeometricDrag)
 local MouseTouch = require(ReplicatedStorage.NonWallyPackages.MouseTouch)
 local Cameras = require(ReplicatedStorage.Common.Modules.Cameras)
 local ObservableInstance = require(ReplicatedStorage.NonWallyPackages.ObservableInstance)
@@ -25,21 +22,18 @@ local MaxDragDistance = 20
 local Player = Players.LocalPlayer
 
 local DraggableClient = Component.new({
-	Tag = "Draggable1",
+	Tag = "Draggable",
 	Ancestors = { Workspace },
 })
 
 function DraggableClient:Construct()
 	self._Trove = Trove.new()
-	self._Comm = ClientComm.new(self.Instance, true, "_Comm"):BuildObject()
-
 	self.LeftClick = Signal.new()
 	self.DragStart = Signal.new()
 	self.DragEnd = Signal.new()
 end
 
 function DraggableClient:Start()
-	print("draggable start")
 	local observablePrimaryPart = self._Trove:Add(ObservableInstance.fromPrimaryPart(self.Instance))
 
 	self._Trove:Add(observablePrimaryPart:Observe(function(RootPart, loadedTrove)
@@ -54,7 +48,6 @@ function DraggableClient:Stop()
 end
 
 function DraggableClient:Loaded(RootPart, trove)
-	print("Draggable loaded")
 	local DRAG_THRESHOLD = 5
 
 	local cakeClickDetector = trove:Add(ClickDetector.new())
@@ -83,13 +76,13 @@ function DraggableClient:Loaded(RootPart, trove)
 
 			if distance >= DRAG_THRESHOLD then
 				cleanupInput()
-
 				local dragTrove = self:OnDragStart()
-				trove:Add(dragTrove)
-
-				dragTrove:Add(function()
-					trove:Remove(dragTrove)
-				end)
+				if dragTrove then
+					trove:Add(dragTrove)
+					dragTrove:Add(function()
+						trove:Remove(dragTrove)
+					end)
+				end
 			end
 		end)
 
@@ -99,90 +92,101 @@ function DraggableClient:Loaded(RootPart, trove)
 		end)
 	end))
 end
+
 function DraggableClient:OnDragStart()
 	local characterSizeOffset = Player.Character:GetExtentsSize().Y / 2
 
 	local dragTrove = Trove.new()
 	local mouseTouch = dragTrove:Add(MouseTouch.new())
 
-	local cakeSurfaceClickDetector = dragTrove:Add(ClickDetector.new())
-	cakeSurfaceClickDetector:SetResultFilterFunction(function(result)
-		return if result then true else false
-	end)
-
 	local cakePrimaryPart = self.Instance.PrimaryPart
+	if not cakePrimaryPart then
+		return dragTrove
+	end
+
 	local cakeDrag = dragTrove:Add(PhysicsDrag.new(cakePrimaryPart))
 
-	-- 1. Get the original Pivot and Rotation
+	-- Get initial grab position for our screen offset calculation
+	local initialGrabPos = self:_GetBottomCenterPositionOfBoundingEllipse()
+
+	-- 2. Handle Rotation
 	local originalPivot = cakePrimaryPart:GetPivot()
 	local originalRotation = originalPivot.Rotation
 
-	-- Check if the cake has the tag to remain upright while dragging
 	if CollectionService:HasTag(self.Instance, "DragUpright") then
-		-- ToEulerAnglesYXZ is used here to accurately isolate the Y (Yaw) rotation.
-		-- We apply only the Yaw to a new CFrame, forcing the X (Pitch) and Z (Roll) to be 0 (upright).
 		local _pitch, yaw, _roll = originalRotation:ToEulerAnglesYXZ()
 		originalRotation = CFrame.Angles(0, yaw, 0)
 	end
 
-	-- 2. Calculate Screen-Space Offset
-	-- We measure the 2D screen distance from the real mouse cursor to the cake's pivot
+	-- 3. Calculate Screen-Space Offset
+	-- CRITICAL FIX: We calculate offset based on the initialGrabPos, not the pivot!
 	local camera = workspace.CurrentCamera
-	local pivotScreenPos3D = camera:WorldToViewportPoint(originalPivot.Position)
+	local pivotScreenPos3D = camera:WorldToViewportPoint(initialGrabPos)
 	local pivotScreenPos2D = Vector2.new(pivotScreenPos3D.X, pivotScreenPos3D.Y)
 
 	local initialMousePos = mouseTouch:GetPosition()
 	local screenOffset = pivotScreenPos2D - initialMousePos
 
-	-- 3. Setup raycast params for the WORLD (ignoring the cake and player)
 	local worldRayParams = RaycastParams.new()
 	worldRayParams.FilterType = Enum.RaycastFilterType.Exclude
-	worldRayParams.FilterDescendantsInstances = { self.Instance, Player.Character }
 
 	cakeDrag:SetDragStyle(function()
 		local rayDistance = (Player.Character.HumanoidRootPart.Position - Workspace.CurrentCamera.CFrame.Position).Magnitude
 			+ characterSizeOffset
 		local currentMousePos = mouseTouch:GetPosition()
 
-		-- 4. Calculate the "Virtual" Mouse Position
-		-- By adding our screenOffset, we pretend the ray is being cast exactly from the Pivot's viewpoint
 		local virtualMousePos = currentMousePos + screenOffset
 		local virtualRay = mouseTouch:GetRay(virtualMousePos)
 
-		-- Raycast against the world using our shifted virtual ray
 		local result = mouseTouch:Raycast(worldRayParams, rayDistance, virtualMousePos)
 
 		local targetPos
 		if result then
 			targetPos = result.Position
 		else
-			-- Fallback slightly in front of the camera if pointing at the sky
 			targetPos = virtualRay.Origin + (virtualRay.Direction * rayDistance)
 		end
 
 		ClickDetector.OverrideCursorPosition = Vector3.new(virtualMousePos.X, virtualMousePos.Y, 0)
 		ClickDetector.OverrideIcon = MouseIcons.GrabClosed
-		-- 5. Set the pivot EXACTLY to the hit position
-		-- The model is now perfectly moved by its pivot, but visually it feels like you're pulling from where you clicked!
+
+		local distance = (targetPos - Player.Character.HumanoidRootPart.Position).Magnitude
+		if distance > MaxDragDistance then
+			dragTrove:Clean()
+		end
+
+		-- The target is the position we hit, and we pass the original rotation.
+		-- Because we only changed grabAttachment's Position (not Rotation),
+		-- AlignCFrame will properly match this rotation without fighting itself!
 		return CFrame.new(targetPos) * originalRotation
 	end)
 
 	cakeDrag:SetPhysicsStyle(
 		function(originPart: BasePart, grabPart: BasePart, grabPosition: Vector3, dragTrove1: typeof(Trove.new()))
-			-- The attachment on the invisible origin part (follows the mouse exactly)
+			local connectedParts = self.Instance.PrimaryPart:GetConnectedParts(true)
+			worldRayParams.FilterDescendantsInstances = connectedParts
+			worldRayParams:AddToFilter(Player.Character)
+
 			local originAttachment = dragTrove1:Add(Instance.new("Attachment"))
 			originAttachment.Parent = originPart
-			originAttachment.Visible = true
+			originAttachment.Visible = false
 
-			-- The attachment on the actual physical part we are grabbing
-			local grabAttachment = dragTrove1:Add(Instance.new("Attachment"))
-			grabAttachment.Parent = grabPart
-			grabAttachment.Visible = true
-			grabAttachment.WorldCFrame = grabPart:GetPivot()
+			-- 1. Setup the grab Attachment
+			local grabAttachment: Attachment = dragTrove:Add(Instance.new("Attachment"))
+			grabAttachment.Parent = cakePrimaryPart
+			grabAttachment.Visible = false
+			grabAttachment.Orientation = Vector3.zero -- Align with the part's rotation
+
+			-- Dynamically update ONLY the WorldPosition based on the AABB
+			originPart.Position = self:_GetBottomCenterPositionOfBoundingEllipse()
+			grabAttachment.WorldPosition = self:_GetBottomCenterPositionOfBoundingEllipse()
+			dragTrove:Add(RunService.Stepped:Connect(function()
+				grabAttachment.WorldPosition = self:_GetBottomCenterPositionOfBoundingEllipse()
+			end))
 
 			AlignCFrame.new(grabPart, grabAttachment, originAttachment)
 
-			for _, part in grabPart:GetConnectedParts(true) do
+			for _, part in connectedParts do
 				local oldCanCollide = part.CanCollide
 				part.CanCollide = false
 				dragTrove1:Add(function()
@@ -206,20 +210,7 @@ function DraggableClient:OnDragStart()
 		ClickDetector.OverrideIcon = nil
 	end)
 
-	dragTrove:Add(RunService.Heartbeat:Connect(function()
-		local character = Player.Character
-
-		if character and character:FindFirstChild("HumanoidRootPart") and cakePrimaryPart then
-			local rootPart = character.HumanoidRootPart
-			local distance = (cakePrimaryPart.Position - rootPart.Position).Magnitude
-
-			if distance > MaxDragDistance then
-				dragTrove:Clean()
-			end
-		end
-	end))
-
-	cakeDrag:StartDrag():andThen(function(dragSuccess)
+	cakeDrag:StartDrag():andThen(function(dragSuccess, message)
 		if dragSuccess then
 			dragTrove:Add(mouseTouch.LeftUp:Connect(function()
 				dragTrove:Clean()
@@ -227,10 +218,60 @@ function DraggableClient:OnDragStart()
 		else
 			dragTrove:Clean()
 			SoundUtils.PlaySoundOnce(SoundEffects.Error, self.Instance.PrimaryPart)
+			warn(message)
 		end
 	end)
 
 	return dragTrove
+end
+
+-- Reworked to return just the Vector3 position of the world AABB
+function DraggableClient:_GetBottomCenterPositionOfBoundingEllipse(): Vector3
+	local parts = self.Instance.PrimaryPart:GetConnectedParts()
+	local minX, minY, minZ = math.huge, math.huge, math.huge
+	local maxX, maxY, maxZ = -math.huge, -math.huge, -math.huge
+	local hasParts = false
+
+	for _, descendant in parts do
+		if descendant:IsA("BasePart") then
+			hasParts = true
+
+			-- STREAMING_CHUNK: Gathering CFrame and half-size
+			local cf = descendant.CFrame
+			local size = descendant.Size
+			local hX, hY, hZ = size.X * 0.5, size.Y * 0.5, size.Z * 0.5
+
+			local rv = cf.RightVector
+			local uv = cf.UpVector
+			local lv = cf.LookVector
+
+			-- STREAMING_CHUNK: Calculating bounding ellipsoid extents
+			-- This formula calculates the maximum extent of an ellipsoid along the world axes.
+			-- It provides a tighter fit than an AABB for rotated parts and round objects.
+			local extX = math.sqrt((rv.X * hX) ^ 2 + (uv.X * hY) ^ 2 + (lv.X * hZ) ^ 2)
+			local extY = math.sqrt((rv.Y * hX) ^ 2 + (uv.Y * hY) ^ 2 + (lv.Y * hZ) ^ 2)
+			local extZ = math.sqrt((rv.Z * hX) ^ 2 + (uv.Z * hY) ^ 2 + (lv.Z * hZ) ^ 2)
+
+			local pos = cf.Position
+			local pX, pY, pZ = pos.X, pos.Y, pos.Z
+
+			-- STREAMING_CHUNK: Expanding the global min/max bounds based on the ellipsoid's extents
+			minX = math.min(minX, pX - extX)
+			minY = math.min(minY, pY - extY)
+			minZ = math.min(minZ, pZ - extZ)
+
+			maxX = math.max(maxX, pX + extX)
+			maxY = math.max(maxY, pY + extY)
+			maxZ = math.max(maxZ, pZ + extZ)
+		end
+	end
+
+	if not hasParts then
+		return self.Instance:GetPivot().Position
+	end
+
+	-- STREAMING_CHUNK: Returning the center point for X and Z, and the lowest point for Y
+	return Vector3.new((minX + maxX) * 0.5, minY, (minZ + maxZ) * 0.5)
 end
 
 return DraggableClient

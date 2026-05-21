@@ -1,5 +1,7 @@
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local RunService = game:GetService("RunService")
+
 local Comm = require(ReplicatedStorage.Packages.Comm)
 local ClientComm = Comm.ClientComm
 local GeometricDrag = require(ReplicatedStorage.NonWallyPackages.GeometricDrag)
@@ -8,6 +10,10 @@ local Trove = require(ReplicatedStorage.Packages.Trove)
 local Promise = require(ReplicatedStorage.Packages.Promise)
 local Shared = require(script.Parent.Shared)
 local AlignCFrame = require(ReplicatedStorage.NonWallyPackages.AlignCFrame)
+local Signal = require(ReplicatedStorage.Packages.Signal)
+local Player = Players.LocalPlayer
+
+local TELEPORT_THRESHOLD = 30
 
 local defaultPhysicsStyle = function(
 	originPart: BasePart,
@@ -17,11 +23,11 @@ local defaultPhysicsStyle = function(
 )
 	local originAttachment = dragTrove:Add(Instance.new("Attachment"))
 	originAttachment.Parent = originPart
-	originAttachment.Visible = true
+	originAttachment.Visible = false
 
 	local grabAttachment = dragTrove:Add(Instance.new("Attachment"))
 	grabAttachment.Parent = grabPart
-	grabAttachment.Visible = true
+	grabAttachment.Visible = false
 	grabAttachment.WorldCFrame = grabPart:GetPivot()
 
 	AlignCFrame.new(grabPart, grabAttachment, originAttachment)
@@ -77,45 +83,29 @@ function PhysicsDragClient:StartDrag(grabPos: Vector3?)
 		return Promise.resolve(false)
 	end
 
-	-- Instant local rejection for anchored / welded-to-anchored parts.
-	-- CanSetNetworkOwnership returns false for both cases, and the server
-	-- would reject these requests anyway — checking here avoids the
-	-- roundtrip.
-	local canSet, reason = Shared.CanSetOwnership(self._GrabPart)
-	if not canSet then
+	-- Instant rejection utilizing the universal Shared.CanDrag function
+	local canDrag, reason = Shared.CanDrag(Player, self._GrabPart)
+	if not canDrag then
 		if Shared.DEBUG then
-			warn(`[PhysicsDrag] Client Rejected: Cannot set network ownership ({reason})`)
+			warn(`[PhysicsDrag] Client Rejected: {reason}`)
 		end
-		return Promise.resolve(false)
-	end
-
-	local currentOwner = self._GrabPart:GetAttribute("PhysicsDrag_NetworkOwner")
-	local isHeld = self._GrabPart:GetAttribute("PhysicsDrag_IsHeld")
-	local lockDuringSettle = self._GrabPart:GetAttribute("PhysicsDrag_LockOwnershipDuringSettleTime")
-	local isSettling = self._GrabPart:GetAttribute("PhysicsDrag_IsSettling")
-	local localPlayerName = Players.LocalPlayer.Name
-
-	-- INSTANT REJECTION: Predict server rejection locally
-	if currentOwner and currentOwner ~= localPlayerName then
-		-- If another player is actively holding it
-		if isHeld then
-			if Shared.DEBUG then
-				warn(`[PhysicsDrag] Client Rejected: Part is actively held by {currentOwner}`)
-			end
-			return Promise.resolve(false)
-
-			-- UPDATED: Only reject if we KNOW it is currently settling
-		elseif lockDuringSettle and isSettling then
-			if Shared.DEBUG then
-				warn(`[PhysicsDrag] Client Rejected: Part is settling and locked to {currentOwner}`)
-			end
-			return Promise.resolve(false)
-		end
+		return Promise.resolve(false, `a [PhysicsDrag] Client Rejected: {reason}`)
 	end
 
 	self._IsDragging = true
 
 	local function startLocalDrag()
+		-- Instantly unweld locally while we wait for the server verification
+		local tempWeld = self._GrabPart:FindFirstChild("ClientTempPhysicsDragWeld")
+		if tempWeld then
+			tempWeld:Destroy()
+		end
+
+		local serverWeld = self._GrabPart:FindFirstChild("PhysicsDragWeld")
+		if serverWeld then
+			serverWeld:Destroy()
+		end
+
 		local dragTrove = self._Trove:Extend()
 		self._DragTrove = dragTrove
 
@@ -128,61 +118,49 @@ function PhysicsDragClient:StartDrag(grabPos: Vector3?)
 
 		self._PhysicsStyle(physicsOriginPart, self._GrabPart, grabPos, dragTrove)
 		self._GeometricDrag:StartDrag()
+
+		-- Teleport handling / Failsafe
+		local lastTargetPos = physicsOriginPart.Position
+		dragTrove:Add(RunService.Heartbeat:Connect(function()
+			if not self._IsDragging then
+				return
+			end
+
+			local currentTargetPos = physicsOriginPart.Position
+			local distance = (currentTargetPos - lastTargetPos).Magnitude
+
+			-- Failsafe: Snap part if it lags too far behind the target (e.g. Player teleported)
+			if distance > TELEPORT_THRESHOLD then
+				self._GrabPart:PivotTo(physicsOriginPart.CFrame)
+
+				self._GrabPart.AssemblyLinearVelocity = Vector3.zero
+				self._GrabPart.AssemblyAngularVelocity = Vector3.zero
+			end
+
+			lastTargetPos = currentTargetPos
+		end))
 	end
 
-	if currentOwner == localPlayerName then
-		if Shared.DEBUG then
-			print("[PhysicsDrag] Client already has NetworkOwner attribute. Bypassing server wait!")
-		end
+	startLocalDrag()
 
-		startLocalDrag()
-
-		self._DragComm
-			:SetOwnershipState(true)
-			:andThen(function(success, reason)
-				if not success then
-					if Shared.DEBUG then
-						warn("[PhysicsDrag] Server rejected bypassed drag! Reconciling... Reason:", reason)
-					end
-					self:StopDrag()
-				end
-			end)
-			:catch(function(err)
+	self._DragComm
+		:SetOwnershipState(true)
+		:andThen(function(success, serverReason)
+			if not success then
 				if Shared.DEBUG then
-					warn("[PhysicsDrag] Network error during bypassed request:", err)
+					warn("[PhysicsDrag] Server rejected bypassed drag! Reconciling... Reason:", serverReason)
 				end
 				self:StopDrag()
-			end)
+			end
+		end)
+		:catch(function(err)
+			if Shared.DEBUG then
+				warn("[PhysicsDrag] Network error during drag request:", err)
+			end
+			self:StopDrag()
+		end)
 
-		return Promise.resolve(true)
-	end
-
-	return Promise.new(function(resolve, reject)
-		self._DragComm
-			:SetOwnershipState(true)
-			:andThen(function(success, reason)
-				if Shared.DEBUG then
-					print(success, reason)
-				end
-				if not success then
-					if Shared.DEBUG then
-						warn("[PhysicsDrag] Rejected by Server:", reason or "Unknown reason")
-					end
-					self._IsDragging = false
-					return resolve(false)
-				end
-
-				startLocalDrag()
-				resolve(true)
-			end)
-			:catch(function(err)
-				if Shared.DEBUG then
-					warn("[PhysicsDrag] Network error during drag request:", err)
-				end
-				self._IsDragging = false
-				resolve(false)
-			end)
-	end)
+	return Promise.resolve(true)
 end
 
 function PhysicsDragClient:StopDrag()
@@ -191,12 +169,54 @@ function PhysicsDragClient:StopDrag()
 	end
 	self._IsDragging = false
 
+	-- Detect if we are dropping onto a Surface
+	local overlapParams = OverlapParams.new()
+	overlapParams.FilterType = Enum.RaycastFilterType.Exclude
+	overlapParams.FilterDescendantsInstances = self._GrabPart:GetConnectedParts(true)
+
+	-- Inflate the bounding box slightly to detect parts we are resting on
+	local checkSize = self._GrabPart.Size + Vector3.new(0.2, 0.2, 0.2)
+	local partsInBox = workspace:GetPartBoundsInBox(self._GrabPart.CFrame, checkSize, overlapParams)
+
+	local surfacePart, weldOffset = nil, nil
+	for _, part in partsInBox do
+		if part:HasTag("Surface") then
+			surfacePart = part
+			weldOffset = surfacePart.CFrame:ToObjectSpace(self._GrabPart.CFrame)
+			break
+		end
+	end
+
+	local tempWeld = nil
+	if surfacePart then
+		tempWeld = Instance.new("WeldConstraint")
+		tempWeld.Name = "ClientTempPhysicsDragWeld"
+		tempWeld.Part0 = self._GrabPart
+		tempWeld.Part1 = surfacePart
+		tempWeld.Parent = self._GrabPart
+	end
+
 	if self._DragTrove then
 		self._DragTrove:Clean()
 		self._DragTrove = nil
 	end
 
-	self._DragComm:SetOwnershipState(false)
+	-- Send drop request to server with the detected surface part
+	self._DragComm
+		:SetOwnershipState(false, surfacePart, weldOffset)
+		:andThen(function()
+			if tempWeld and tempWeld.Parent then
+				tempWeld:Destroy()
+			end
+		end)
+		:catch(function(err)
+			if Shared.DEBUG then
+				warn("[PhysicsDrag] Failed to release ownership:", err)
+			end
+			if tempWeld and tempWeld.Parent then
+				tempWeld:Destroy()
+			end
+		end)
 end
 
 function PhysicsDragClient:SetDragStyle(dragStyle)
