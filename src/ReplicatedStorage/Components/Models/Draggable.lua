@@ -1,3 +1,4 @@
+-- STREAMING_CHUNK:Initializing services and modules...
 local CollectionService = game:GetService("CollectionService")
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -17,10 +18,18 @@ local MouseIcons = require(ReplicatedStorage.Common.GameInfo.MouseIcons)
 local AlignCFrame = require(ReplicatedStorage.NonWallyPackages.AlignCFrame)
 local SoundEffects = require(ReplicatedStorage.Common.Modules.SoundEffects)
 local SoundUtils = require(ReplicatedStorage.NonWallyPackages.SoundUtils)
+local Input = require(ReplicatedStorage.Packages.Input)
+local MultiTouch = require(ReplicatedStorage.NonWallyPackages.MultiTouch)
+local LockGui = require(ReplicatedStorage.Common.Modules.Instances.LockGui)
+local Property = require(ReplicatedStorage.NonWallyPackages.Property)
+local NetworkProperty = require(ReplicatedStorage.NonWallyPackages.NetworkProperty)
+
+local Keyboard = Input.Keyboard.new()
 
 local MaxDragDistance = 20
 local Player = Players.LocalPlayer
 
+-- STREAMING_CHUNK:Defining the DraggableClient component...
 local DraggableClient = Component.new({
 	Tag = "Draggable",
 	Ancestors = { Workspace },
@@ -31,8 +40,15 @@ function DraggableClient:Construct()
 	self.LeftClick = Signal.new()
 	self.DragStart = Signal.new()
 	self.DragEnd = Signal.new()
+
+	self._LockGui = self._Trove:Add(LockGui.new())
+	self._IsHeld = NetworkProperty.require(self.Instance.PrimaryPart, "IsHeld")
+
+	self.PickupSound = SoundEffects.Pickup.Simple1
+	self.PutDownSound = SoundEffects.PutDown.Simple1
 end
 
+-- STREAMING_CHUNK:Setting up component start and stop methods...
 function DraggableClient:Start()
 	local observablePrimaryPart = self._Trove:Add(ObservableInstance.fromPrimaryPart(self.Instance))
 
@@ -47,7 +63,18 @@ function DraggableClient:Stop()
 	self._Trove:Clean()
 end
 
+-- STREAMING_CHUNK:Handling the Loaded event and click detection...
 function DraggableClient:Loaded(RootPart, trove)
+	self._IsHeld:Observe(function(isHeld)
+		if isHeld then
+			print(true)
+			SoundUtils.PlaySoundOnce(self.PickupSound, self.Instance.PrimaryPart)
+		else
+			print(false)
+			SoundUtils.PlaySoundOnce(self.PutDownSound, self.Instance.PrimaryPart)
+		end
+	end)
+
 	local DRAG_THRESHOLD = 5
 
 	local cakeClickDetector = trove:Add(ClickDetector.new())
@@ -93,6 +120,7 @@ function DraggableClient:Loaded(RootPart, trove)
 	end))
 end
 
+-- STREAMING_CHUNK:Configuring drag start and setting up state variables...
 function DraggableClient:OnDragStart()
 	local characterSizeOffset = Player.Character:GetExtentsSize().Y / 2
 
@@ -109,17 +137,39 @@ function DraggableClient:OnDragStart()
 	-- Get initial grab position for our screen offset calculation
 	local initialGrabPos = self:_GetBottomCenterPositionOfBoundingEllipse()
 
-	-- 2. Handle Rotation
+	-- Rotation Variables
 	local originalPivot = cakePrimaryPart:GetPivot()
-	local originalRotation = originalPivot.Rotation
+	local accumulatedRotation = originalPivot.Rotation
 
 	if CollectionService:HasTag(self.Instance, "DragUpright") then
-		local _pitch, yaw, _roll = originalRotation:ToEulerAnglesYXZ()
-		originalRotation = CFrame.Angles(0, yaw, 0)
+		local _pitch, yaw, _roll = accumulatedRotation:ToEulerAnglesYXZ()
+		accumulatedRotation = CFrame.Angles(0, yaw, 0)
 	end
 
-	-- 3. Calculate Screen-Space Offset
-	-- CRITICAL FIX: We calculate offset based on the initialGrabPos, not the pivot!
+	-- State variables for rotation
+	local isRotating = false
+	local wasRotating = false
+	local lockedVirtualMousePos = nil
+
+	local lastTargetPos = cakePrimaryPart.Position
+	local rotationSensitivity = 0.015 -- Adjust this to make rotation faster/slower
+
+	-- STREAMING_CHUNK:Connecting keyboard input for manual rotation...
+	dragTrove:Add(Keyboard.KeyDown:Connect(function(keycode)
+		if keycode == Enum.KeyCode.R then
+			isRotating = true
+		end
+	end))
+
+	dragTrove:Add(Keyboard.KeyUp:Connect(function(keycode)
+		if keycode == Enum.KeyCode.R then
+			isRotating = false
+			-- Explicitly return mouse to default when R is let go
+			UserInputService.MouseBehavior = Enum.MouseBehavior.Default
+		end
+	end))
+
+	-- Calculate Screen-Space Offset
 	local camera = workspace.CurrentCamera
 	local pivotScreenPos3D = camera:WorldToViewportPoint(initialGrabPos)
 	local pivotScreenPos2D = Vector2.new(pivotScreenPos3D.X, pivotScreenPos3D.Y)
@@ -130,12 +180,39 @@ function DraggableClient:OnDragStart()
 	local worldRayParams = RaycastParams.new()
 	worldRayParams.FilterType = Enum.RaycastFilterType.Exclude
 
+	-- STREAMING_CHUNK:Setting up the drag style and calculating positions...
 	cakeDrag:SetDragStyle(function()
+		-- 1. DETERMINE ROTATION STATE FIRST
+		local unprocessedCount = 0
+		local touchPositions = MultiTouch.TouchPositions:Get()
+
+		if touchPositions then
+			for _, touchData in pairs(touchPositions) do
+				if touchData.TouchType == MultiTouch.TouchType.Unprocessed then
+					unprocessedCount += 1
+				end
+			end
+		end
+
+		local isTouchRotating = unprocessedCount >= 2
+		local currentlyRotating = isRotating or isTouchRotating
+
+		-- Manage the screen-space lock state so the raycast doesn't slide around
+		if currentlyRotating and not wasRotating then
+			-- We just started rotating! Lock the screen position.
+			lockedVirtualMousePos = mouseTouch:GetPosition() + screenOffset
+		elseif not currentlyRotating and wasRotating then
+			-- We stopped rotating. Release the lock.
+			lockedVirtualMousePos = nil
+		end
+		wasRotating = currentlyRotating
+
+		-- 2. CALCULATE POSITION
 		local rayDistance = (Player.Character.HumanoidRootPart.Position - Workspace.CurrentCamera.CFrame.Position).Magnitude
 			+ characterSizeOffset
-		local currentMousePos = mouseTouch:GetPosition()
 
-		local virtualMousePos = currentMousePos + screenOffset
+		-- If we are locked in rotation, use the locked screen position. Otherwise use the live position.
+		local virtualMousePos = lockedVirtualMousePos or (mouseTouch:GetPosition() + screenOffset)
 		local virtualRay = mouseTouch:GetRay(virtualMousePos)
 
 		local result = mouseTouch:Raycast(worldRayParams, rayDistance, virtualMousePos)
@@ -147,20 +224,44 @@ function DraggableClient:OnDragStart()
 			targetPos = virtualRay.Origin + (virtualRay.Direction * rayDistance)
 		end
 
-		ClickDetector.OverrideCursorPosition = Vector3.new(virtualMousePos.X, virtualMousePos.Y, 0)
-		ClickDetector.OverrideIcon = MouseIcons.GrabClosed
-
 		local distance = (targetPos - Player.Character.HumanoidRootPart.Position).Magnitude
 		if distance > MaxDragDistance then
 			dragTrove:Clean()
 		end
 
-		-- The target is the position we hit, and we pass the original rotation.
-		-- Because we only changed grabAttachment's Position (not Rotation),
-		-- AlignCFrame will properly match this rotation without fighting itself!
-		return CFrame.new(targetPos) * originalRotation
+		-- Update last target position
+		lastTargetPos = targetPos
+
+		-- STREAMING_CHUNK:Processing rotation logic and touch inputs...
+		-- 3. PROCESS ROTATION DELTAS
+		if currentlyRotating then
+			-- ENFORCEMENT: Keep mouse locked while rotating
+			UserInputService.MouseBehavior = Enum.MouseBehavior.LockCurrentPosition
+
+			-- Get mouse movement since last frame
+			local mouseDelta = -UserInputService:GetMouseDelta()
+
+			-- Pitch (Up/Down Mouse Movement) -> Rotates around Camera's Right Vector
+			local pitch = -mouseDelta.Y * rotationSensitivity
+			-- Yaw (Left/Right Mouse Movement) -> Rotates around World Up Vector
+			local yaw = -mouseDelta.X * rotationSensitivity
+
+			-- Create Rotation CFrames
+			local rotationY = CFrame.fromAxisAngle(Vector3.yAxis, yaw)
+			local rotationX = CFrame.fromAxisAngle(Workspace.CurrentCamera.CFrame.RightVector, pitch)
+
+			-- Multiply the new delta rotation onto our existing rotation
+			accumulatedRotation = rotationY * rotationX * accumulatedRotation
+		end
+
+		ClickDetector.OverrideCursorPosition = Vector3.new(virtualMousePos.X, virtualMousePos.Y, 0)
+		ClickDetector.OverrideIcon = MouseIcons.GrabClosed
+
+		-- 4. COMBINE AND RETURN
+		return CFrame.new(targetPos) * accumulatedRotation
 	end)
 
+	-- STREAMING_CHUNK:Setting up physics style for dragging...
 	cakeDrag:SetPhysicsStyle(
 		function(originPart: BasePart, grabPart: BasePart, grabPosition: Vector3, dragTrove1: typeof(Trove.new()))
 			local connectedParts = self.Instance.PrimaryPart:GetConnectedParts(true)
@@ -171,11 +272,11 @@ function DraggableClient:OnDragStart()
 			originAttachment.Parent = originPart
 			originAttachment.Visible = false
 
-			-- 1. Setup the grab Attachment
+			-- Setup the grab Attachment
 			local grabAttachment: Attachment = dragTrove:Add(Instance.new("Attachment"))
 			grabAttachment.Parent = cakePrimaryPart
 			grabAttachment.Visible = false
-			grabAttachment.Orientation = Vector3.zero -- Align with the part's rotation
+			grabAttachment.Orientation = Vector3.zero
 
 			-- Dynamically update ONLY the WorldPosition based on the AABB
 			originPart.Position = self:_GetBottomCenterPositionOfBoundingEllipse()
@@ -185,19 +286,10 @@ function DraggableClient:OnDragStart()
 			end))
 
 			AlignCFrame.new(grabPart, grabAttachment, originAttachment)
-
-			for _, part in connectedParts do
-				local oldCanCollide = part.CanCollide
-				part.CanCollide = false
-				dragTrove1:Add(function()
-					if part.Parent then
-						part.CanCollide = oldCanCollide
-					end
-				end)
-			end
 		end
 	)
 
+	-- STREAMING_CHUNK:Finishing drag setup and starting drag behavior...
 	if UserInputService.PreferredInput == Enum.PreferredInput.Touch then
 		Cameras.PlayerCamera.Props.FreezeCamera:Set(true)
 		dragTrove:Add(function()
@@ -218,6 +310,7 @@ function DraggableClient:OnDragStart()
 		else
 			dragTrove:Clean()
 			SoundUtils.PlaySoundOnce(SoundEffects.Error, self.Instance.PrimaryPart)
+			self._LockGui:ShowOn(self.Instance.PrimaryPart)
 			warn(message)
 		end
 	end)
@@ -225,7 +318,7 @@ function DraggableClient:OnDragStart()
 	return dragTrove
 end
 
--- Reworked to return just the Vector3 position of the world AABB
+-- STREAMING_CHUNK:Calculating the bounding ellipse bottom center...
 function DraggableClient:_GetBottomCenterPositionOfBoundingEllipse(): Vector3
 	local parts = self.Instance.PrimaryPart:GetConnectedParts()
 	local minX, minY, minZ = math.huge, math.huge, math.huge
@@ -236,7 +329,6 @@ function DraggableClient:_GetBottomCenterPositionOfBoundingEllipse(): Vector3
 		if descendant:IsA("BasePart") then
 			hasParts = true
 
-			-- STREAMING_CHUNK: Gathering CFrame and half-size
 			local cf = descendant.CFrame
 			local size = descendant.Size
 			local hX, hY, hZ = size.X * 0.5, size.Y * 0.5, size.Z * 0.5
@@ -245,9 +337,6 @@ function DraggableClient:_GetBottomCenterPositionOfBoundingEllipse(): Vector3
 			local uv = cf.UpVector
 			local lv = cf.LookVector
 
-			-- STREAMING_CHUNK: Calculating bounding ellipsoid extents
-			-- This formula calculates the maximum extent of an ellipsoid along the world axes.
-			-- It provides a tighter fit than an AABB for rotated parts and round objects.
 			local extX = math.sqrt((rv.X * hX) ^ 2 + (uv.X * hY) ^ 2 + (lv.X * hZ) ^ 2)
 			local extY = math.sqrt((rv.Y * hX) ^ 2 + (uv.Y * hY) ^ 2 + (lv.Y * hZ) ^ 2)
 			local extZ = math.sqrt((rv.Z * hX) ^ 2 + (uv.Z * hY) ^ 2 + (lv.Z * hZ) ^ 2)
@@ -255,7 +344,6 @@ function DraggableClient:_GetBottomCenterPositionOfBoundingEllipse(): Vector3
 			local pos = cf.Position
 			local pX, pY, pZ = pos.X, pos.Y, pos.Z
 
-			-- STREAMING_CHUNK: Expanding the global min/max bounds based on the ellipsoid's extents
 			minX = math.min(minX, pX - extX)
 			minY = math.min(minY, pY - extY)
 			minZ = math.min(minZ, pZ - extZ)
@@ -270,7 +358,6 @@ function DraggableClient:_GetBottomCenterPositionOfBoundingEllipse(): Vector3
 		return self.Instance:GetPivot().Position
 	end
 
-	-- STREAMING_CHUNK: Returning the center point for X and Z, and the lowest point for Y
 	return Vector3.new((minX + maxX) * 0.5, minY, (minZ + maxZ) * 0.5)
 end
 

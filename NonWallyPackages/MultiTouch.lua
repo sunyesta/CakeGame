@@ -1,6 +1,7 @@
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local GuiService = game:GetService("GuiService")
+local UserInputService = game:GetService("UserInputService")
 
 -- Assume these packages exist in your project structure
 local TableUtil2 = require(ReplicatedStorage.NonWallyPackages.TableUtil2)
@@ -12,6 +13,7 @@ local PlayerModule = require(Players.LocalPlayer.PlayerScripts.PlayerModule)
 local Signal = require(ReplicatedStorage.Packages.Signal)
 
 local Touch = Input.Touch.new()
+local ShowVisualizer = false
 
 -- Multi Touch
 local MultiTouch = {}
@@ -63,7 +65,7 @@ function MultiTouch.new()
 	self.ZoomGesture = Signal.new() -- (delta: number)
 
 	-- Debugging Property
-	self.ViewTouchPositions = false
+	self.ViewTouchPositions = ShowVisualizer
 
 	-- Internal State
 	self._NextId = 0
@@ -167,7 +169,32 @@ function MultiTouch.new()
 		end
 	end))
 
+	-- NEW: Clear touches if the Roblox Menu is opened
+	self._Trove:Add(GuiService.MenuOpened:Connect(function()
+		self:ClearAllTouches()
+	end))
+
+	-- NEW: Clear touches if the app loses focus (e.g. player minimizes app on mobile)
+	self._Trove:Add(UserInputService.WindowFocusReleased:Connect(function()
+		self:ClearAllTouches()
+	end))
+
 	return self
+end
+
+-- NEW METHOD: Safely resets all multi-touch states
+function MultiTouch:ClearAllTouches()
+	-- Cleanup visualizers safely
+	for id, _ in pairs(self.TouchPositions:Get()) do
+		self:_RemoveVisualizer(id)
+	end
+
+	-- Clear state maps
+	self.TouchPositions:Set({})
+	table.clear(self._TouchMap)
+
+	-- Reset zoom tracking
+	self._LastPinchDistance = nil
 end
 
 -- Processes active touches to determine if a pinch-to-zoom is occurring
@@ -208,6 +235,10 @@ function MultiTouch:_ProcessZoomGesture()
 end
 
 function MultiTouch:_GetVisualizerGui()
+	if not self.ViewTouchPositions then
+		return
+	end
+
 	if not self._VisualizerGui then
 		local gui = Instance.new("ScreenGui")
 		gui.Name = "TouchVisualizers"
@@ -225,7 +256,15 @@ function MultiTouch:_GetVisualizerGui()
 end
 
 function MultiTouch:_UpdateVisualizer(id, position)
+	if not self.ViewTouchPositions then
+		return
+	end
+
 	local gui = self:_GetVisualizerGui()
+	if not gui then
+		return
+	end
+
 	local frame = self._Visualizers[id]
 
 	if not frame then

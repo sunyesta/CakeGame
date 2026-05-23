@@ -7,6 +7,9 @@ local Trove = require(ReplicatedStorage.Packages.Trove)
 local Property = require(ReplicatedStorage.NonWallyPackages.Property)
 local Comm = require(ReplicatedStorage.Packages.Comm)
 
+-- NEW: Import NetworkProperty
+local NetworkProperty = require(ReplicatedStorage.NonWallyPackages.NetworkProperty)
+
 -- SERVER SIDE LOGIC
 local ServerComm = Comm.ServerComm
 
@@ -18,7 +21,6 @@ local FILTER_TYPES = {
 	Exclude = "Exclude",
 }
 
-local SETTLE_TIME = 4
 local NEAREST_PLAYER_MAX_DISTANCE = 50
 
 PhysicsDragServer.FilterTypes = FILTER_TYPES
@@ -95,12 +97,16 @@ function PhysicsDragServer.CreateDragHandler(part: BasePart)
 	if self.Instance:GetAttribute("PhysicsDrag_LockOwnershipDuringSettleTime") == nil then
 		self.Instance:SetAttribute("PhysicsDrag_LockOwnershipDuringSettleTime", true)
 	end
-	if self.Instance:GetAttribute("PhysicsDrag_IsHeld") == nil then
-		self.Instance:SetAttribute("PhysicsDrag_IsHeld", false)
+	if self.Instance:GetAttribute("PhysicsDrag_IsRootHeld") == nil then
+		self.Instance:SetAttribute("PhysicsDrag_IsRootHeld", false)
 	end
 	if self.Instance:GetAttribute("PhysicsDrag_RemainingLockedTime") == nil then
 		self.Instance:SetAttribute("PhysicsDrag_RemainingLockedTime", 0)
 	end
+
+	-- NetworkProperty replaces the old PhysicsDrag_IsHeld attribute
+	self._IsHeld = self._Trove:Add(NetworkProperty.require(self.Instance, "IsHeld", false))
+	self._IsHeld:SetNetworkOwner(NetworkProperty.SYNCED_OWNERSHIP)
 
 	self._IsActivelyHeld = false
 	self._ActiveOwnerName = nil
@@ -108,6 +114,8 @@ function PhysicsDragServer.CreateDragHandler(part: BasePart)
 	self._SettleEndTime = 0
 
 	self._Comm = self._Trove:Add(ServerComm.new(self.Instance, "_PhysicsDragComm"))
+
+	self.SettleTime = 5
 
 	-- STREAMING_CHUNK:Refreshing ownership and applying bug fix...
 	local function refreshOwnership()
@@ -146,10 +154,10 @@ function PhysicsDragServer.CreateDragHandler(part: BasePart)
 
 		local lockDuringSettle = ownershipPart:GetAttribute("PhysicsDrag_LockOwnershipDuringSettleTime")
 		local isLocked = lockDuringSettle and remainingTime > 0
-		local isHeld = ownershipPart:GetAttribute("PhysicsDrag_IsHeld")
+		local isRootHeld = ownershipPart:GetAttribute("PhysicsDrag_IsRootHeld")
 
 		-- BUG FIX: Enforce Network Ownership during lock or active hold to prevent race conditions
-		local shouldEnforceOwner = (isLocked or isHeld) and self._ActiveOwnerName ~= nil
+		local shouldEnforceOwner = (isLocked or isRootHeld) and self._ActiveOwnerName ~= nil
 		if shouldEnforceOwner then
 			local activePlayer = Players:FindFirstChild(self._ActiveOwnerName)
 			if activePlayer then
@@ -162,12 +170,19 @@ function PhysicsDragServer.CreateDragHandler(part: BasePart)
 				end
 			else
 				-- The active player left the game, abort the lock/hold state safely
-				isHeld = false
+				isRootHeld = false
 				isLocked = false
 				self._ActiveOwnerName = nil
 				self._IsActivelyHeld = false
-				ownershipPart:SetAttribute("PhysicsDrag_IsHeld", false)
+				ownershipPart:SetAttribute("PhysicsDrag_IsRootHeld", false)
 				ownershipPart:SetAttribute("PhysicsDrag_RemainingLockedTime", 0)
+
+				-- Update NetworkProperty
+				self._IsHeld:Set(false)
+
+				-- Force restore collisions locally on the server if the player disconnects abruptly
+				Shared.RestoreCollisions(self.Instance)
+
 				if self._SettleThread then
 					task.cancel(self._SettleThread)
 					self._SettleThread = nil
@@ -176,7 +191,7 @@ function PhysicsDragServer.CreateDragHandler(part: BasePart)
 		end
 
 		-- STREAMING_CHUNK:Falling back to nearest player if idle...
-		if not currentOwnerName and not isHeld and not isLocked then
+		if not currentOwnerName and not isRootHeld and not isLocked then
 			local nearestPlayer = getNearestPlayer(ownershipPart)
 			if nearestPlayer then
 				local assignSuccess = pcall(function()
@@ -209,6 +224,9 @@ function PhysicsDragServer.CreateDragHandler(part: BasePart)
 					return false, reason
 				end
 
+				-- Update NetworkProperty
+				self._IsHeld:Set(true)
+
 				-- 1. Get current ownership part BEFORE unwelding
 				local originalOwnershipPart = Shared.GetOwnershipPart(self.Instance)
 
@@ -232,7 +250,7 @@ function PhysicsDragServer.CreateDragHandler(part: BasePart)
 					if remainTime ~= nil then
 						newOwnershipPart:SetAttribute("PhysicsDrag_RemainingLockedTime", remainTime)
 					end
-					-- We deliberately do NOT copy IsHeld, as only one part can drag at a time.
+					-- We deliberately do NOT copy IsRootHeld, as only one part can drag at a time.
 				end
 
 				if self._SettleThread then
@@ -247,8 +265,11 @@ function PhysicsDragServer.CreateDragHandler(part: BasePart)
 				self._ActiveOwnerName = player.Name
 
 				newOwnershipPart:SetAttribute("PhysicsDrag_NetworkOwner", player.Name)
-				newOwnershipPart:SetAttribute("PhysicsDrag_IsHeld", true)
+				newOwnershipPart:SetAttribute("PhysicsDrag_IsRootHeld", true)
 				newOwnershipPart:SetAttribute("PhysicsDrag_DragWelded", false)
+
+				-- Disable collisions authoritative via the server
+				Shared.TurnOffCollisions(self.Instance)
 
 				if Shared.DEBUG then
 					print(`[PhysicsDrag] {player.Name} granted ownership`)
@@ -259,7 +280,15 @@ function PhysicsDragServer.CreateDragHandler(part: BasePart)
 
 				if self._ActiveOwnerName == player.Name then
 					self._IsActivelyHeld = false
-					ownershipPart:SetAttribute("PhysicsDrag_IsHeld", false)
+					ownershipPart:SetAttribute("PhysicsDrag_IsRootHeld", false)
+
+					-- Update NetworkProperty
+					self._IsHeld:Set(false)
+
+					-- Restore collisions authoritative via the server
+					Shared.RestoreCollisions(self.Instance)
+
+					local serverWeldStatus = nil
 
 					-- Apply Server-Authoritative Weld if Dropped on Surface
 					if
@@ -269,29 +298,38 @@ function PhysicsDragServer.CreateDragHandler(part: BasePart)
 						and droppedOnPart:HasTag("Surface")
 						and weldOffset
 					then
-						-- Force the server to instantly snap the part to the client's reported position
-						self.Instance:PivotTo(droppedOnPart.CFrame * weldOffset)
+						local canWeld, weldReason = Shared.CanWeld(player, self.Instance, droppedOnPart)
 
-						-- Use a standard Weld with the C0 offset provided by the client
-						self.Instance.CFrame = droppedOnPart.CFrame:ToWorldSpace(weldOffset)
-						local weld = Instance.new("WeldConstraint")
-						weld.Name = "PhysicsDragWeld"
-						weld.Part0 = droppedOnPart
-						weld.Part1 = self.Instance
-						weld.Parent = self.Instance
+						if canWeld then
+							-- Force the server to instantly snap the part to the client's reported position
+							self.Instance:PivotTo(droppedOnPart.CFrame * weldOffset)
 
-						ownershipPart:SetAttribute("PhysicsDrag_DragWelded", true)
+							-- Use a standard Weld with the C0 offset provided by the client
+							self.Instance.CFrame = droppedOnPart.CFrame:ToWorldSpace(weldOffset)
+							local weld = Instance.new("WeldConstraint")
+							weld.Name = "PhysicsDragWeld"
+							weld.Part0 = droppedOnPart
+							weld.Part1 = self.Instance
+							weld.Parent = self.Instance
 
-						if Shared.DEBUG then
-							print(`[PhysicsDrag] Welded {self.Instance.Name} to surface {droppedOnPart.Name}`)
+							ownershipPart:SetAttribute("PhysicsDrag_DragWelded", true)
+
+							if Shared.DEBUG then
+								print(`[PhysicsDrag] Welded {self.Instance.Name} to surface {droppedOnPart.Name}`)
+							end
+						else
+							serverWeldStatus = "weld rejected"
+							if Shared.DEBUG then
+								warn(`[PhysicsDrag] Server rejected weld from {player.Name}: {weldReason}`)
+							end
 						end
 					end
 
-					self._SettleEndTime = os.clock() + SETTLE_TIME
+					self._SettleEndTime = os.clock() + self.SettleTime
 
 					-- STREAMING_CHUNK:Spawning the settle thread...
 					self._SettleThread = task.spawn(function()
-						task.wait(SETTLE_TIME)
+						task.wait(self.SettleTime)
 
 						if not self._IsActivelyHeld then
 							-- Re-evaluate ownership part since it could have changed during settle
@@ -308,7 +346,7 @@ function PhysicsDragServer.CreateDragHandler(part: BasePart)
 						self._SettleThread = nil
 					end)
 
-					return true
+					return true, serverWeldStatus
 				end
 
 				if Shared.DEBUG then

@@ -13,7 +13,8 @@ local Draggable = Component.new({
 function Draggable:Construct()
 	self._Trove = Trove.new()
 
-	self._Trove:Add(PhysicsDrag.CreateDragHandler(self.Instance.PrimaryPart))
+	local dragHandler = self._Trove:Add(PhysicsDrag.CreateDragHandler(self.Instance.PrimaryPart))
+	dragHandler.SettleTime = 30
 end
 
 function Draggable:Start() end

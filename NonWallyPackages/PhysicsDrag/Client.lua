@@ -11,8 +11,10 @@ local Promise = require(ReplicatedStorage.Packages.Promise)
 local Shared = require(script.Parent.Shared)
 local AlignCFrame = require(ReplicatedStorage.NonWallyPackages.AlignCFrame)
 local Signal = require(ReplicatedStorage.Packages.Signal)
+local NetworkProperty = require(ReplicatedStorage.NonWallyPackages.NetworkProperty)
 local Player = Players.LocalPlayer
 
+local WELD_REJECTED = "weld rejected"
 local TELEPORT_THRESHOLD = 30
 
 local defaultPhysicsStyle = function(
@@ -31,16 +33,6 @@ local defaultPhysicsStyle = function(
 	grabAttachment.WorldCFrame = grabPart:GetPivot()
 
 	AlignCFrame.new(grabPart, grabAttachment, originAttachment)
-
-	for _, part in grabPart:GetConnectedParts(true) do
-		local oldCanCollide = part.CanCollide
-		part.CanCollide = false
-		dragTrove:Add(function()
-			if part.Parent then
-				part.CanCollide = oldCanCollide
-			end
-		end)
-	end
 end
 
 local function createPhysicsOriginPart(grabPart: BasePart)
@@ -66,9 +58,11 @@ function PhysicsDragClient.new(grabPart: BasePart)
 	self._Trove = Trove.new()
 
 	self._DragComm = ClientComm.new(grabPart, true, "_PhysicsDragComm"):BuildObject()
-	self._GrabPart = grabPart
+	self._Instance = grabPart
 	self._PhysicsStyle = defaultPhysicsStyle
-	self._IsDragging = false
+
+	self._IsHeld = NetworkProperty.require(grabPart, "IsHeld", false)
+	self._IsDropping = false -- Lock to prevent spam-clicking and attribute bouncing
 
 	return self
 end
@@ -76,15 +70,16 @@ end
 function PhysicsDragClient:StartDrag(grabPos: Vector3?)
 	grabPos = grabPos or self:_GetGrabCFrame()
 
-	if self._IsDragging then
+	-- Reject if already dragging, OR if waiting for the server to process a drop
+	if self._IsHeld:Get() or self._IsDropping then
 		if Shared.DEBUG then
-			warn("[PhysicsDrag] Rejected: Already dragging")
+			warn("[PhysicsDrag] Rejected: Already dragging or waiting for drop resolution")
 		end
 		return Promise.resolve(false)
 	end
 
 	-- Instant rejection utilizing the universal Shared.CanDrag function
-	local canDrag, reason = Shared.CanDrag(Player, self._GrabPart)
+	local canDrag, reason = Shared.CanDrag(Player, self._Instance)
 	if not canDrag then
 		if Shared.DEBUG then
 			warn(`[PhysicsDrag] Client Rejected: {reason}`)
@@ -92,37 +87,52 @@ function PhysicsDragClient:StartDrag(grabPos: Vector3?)
 		return Promise.resolve(false, `a [PhysicsDrag] Client Rejected: {reason}`)
 	end
 
-	self._IsDragging = true
+	self._IsHeld:Set(true)
 
 	local function startLocalDrag()
+		local dragTrove = self._Trove:Extend()
+		self._DragTrove = dragTrove
+
+		self._Instance:SetAttribute("PhysicsDrag_IsHeld", true)
+		dragTrove:Add(function()
+			self._Instance:SetAttribute("PhysicsDrag_IsHeld", false)
+		end)
+
 		-- Instantly unweld locally while we wait for the server verification
-		local tempWeld = self._GrabPart:FindFirstChild("ClientTempPhysicsDragWeld")
+		local tempWeld = self._Instance:FindFirstChild("ClientTempPhysicsDragWeld")
 		if tempWeld then
 			tempWeld:Destroy()
 		end
 
-		local serverWeld = self._GrabPart:FindFirstChild("PhysicsDragWeld")
+		local serverWeld = self._Instance:FindFirstChild("PhysicsDragWeld")
 		if serverWeld then
 			serverWeld:Destroy()
 		end
 
-		local dragTrove = self._Trove:Extend()
-		self._DragTrove = dragTrove
+		-- -- Turn off collisions immediately for the client
+		Shared.TurnOffCollisions(self._Instance)
 
-		local physicsOriginPart = dragTrove:Add(createPhysicsOriginPart(self._GrabPart))
+		-- Ensure collisions are restored locally when the drag is finished/cleaned up
+		dragTrove:Add(function()
+			if self._Instance.Parent then
+				Shared.RestoreCollisions(self._Instance)
+			end
+		end)
+
+		local physicsOriginPart = dragTrove:Add(createPhysicsOriginPart(self._Instance))
 		self._GeometricDrag = dragTrove:Add(GeometricDrag.new(physicsOriginPart))
 
 		if self._CustomDragStyle then
 			self._GeometricDrag:SetDragStyle(self._CustomDragStyle)
 		end
 
-		self._PhysicsStyle(physicsOriginPart, self._GrabPart, grabPos, dragTrove)
+		self._PhysicsStyle(physicsOriginPart, self._Instance, grabPos, dragTrove)
 		self._GeometricDrag:StartDrag()
 
 		-- Teleport handling / Failsafe
 		local lastTargetPos = physicsOriginPart.Position
 		dragTrove:Add(RunService.Heartbeat:Connect(function()
-			if not self._IsDragging then
+			if not self._IsHeld:Get() then
 				return
 			end
 
@@ -131,10 +141,10 @@ function PhysicsDragClient:StartDrag(grabPos: Vector3?)
 
 			-- Failsafe: Snap part if it lags too far behind the target (e.g. Player teleported)
 			if distance > TELEPORT_THRESHOLD then
-				self._GrabPart:PivotTo(physicsOriginPart.CFrame)
+				self._Instance:PivotTo(physicsOriginPart.CFrame)
 
-				self._GrabPart.AssemblyLinearVelocity = Vector3.zero
-				self._GrabPart.AssemblyAngularVelocity = Vector3.zero
+				self._Instance.AssemblyLinearVelocity = Vector3.zero
+				self._Instance.AssemblyAngularVelocity = Vector3.zero
 			end
 
 			lastTargetPos = currentTargetPos
@@ -164,26 +174,39 @@ function PhysicsDragClient:StartDrag(grabPos: Vector3?)
 end
 
 function PhysicsDragClient:StopDrag()
-	if not self._IsDragging then
-		return
+	if not self._IsHeld:Get() then
+		return Promise.resolve(false)
 	end
-	self._IsDragging = false
+
+	self._IsHeld:Set(false)
+	self._IsDropping = true -- Engage the network lock
 
 	-- Detect if we are dropping onto a Surface
 	local overlapParams = OverlapParams.new()
 	overlapParams.FilterType = Enum.RaycastFilterType.Exclude
-	overlapParams.FilterDescendantsInstances = self._GrabPart:GetConnectedParts(true)
+	overlapParams.FilterDescendantsInstances = self._Instance:GetConnectedParts(true)
 
 	-- Inflate the bounding box slightly to detect parts we are resting on
-	local checkSize = self._GrabPart.Size + Vector3.new(0.2, 0.2, 0.2)
-	local partsInBox = workspace:GetPartBoundsInBox(self._GrabPart.CFrame, checkSize, overlapParams)
+	local checkSize = self._Instance.Size + Vector3.new(0.2, 0.2, 0.2)
+	local partsInBox = workspace:GetPartBoundsInBox(self._Instance.CFrame, checkSize, overlapParams)
 
 	local surfacePart, weldOffset = nil, nil
+	local weldRejectedLocal = false
+
 	for _, part in partsInBox do
 		if part:HasTag("Surface") then
-			surfacePart = part
-			weldOffset = surfacePart.CFrame:ToObjectSpace(self._GrabPart.CFrame)
-			break
+			local canWeld, reason = Shared.CanWeld(Player, self._Instance, part)
+			if canWeld then
+				surfacePart = part
+				weldOffset = surfacePart.CFrame:ToObjectSpace(self._Instance.CFrame)
+				weldRejectedLocal = false -- Found a valid surface!
+				break
+			else
+				weldRejectedLocal = true
+				if Shared.DEBUG then
+					warn(`[PhysicsDrag] Client rejected weld: {reason}`)
+				end
+			end
 		end
 	end
 
@@ -191,9 +214,9 @@ function PhysicsDragClient:StopDrag()
 	if surfacePart then
 		tempWeld = Instance.new("WeldConstraint")
 		tempWeld.Name = "ClientTempPhysicsDragWeld"
-		tempWeld.Part0 = self._GrabPart
+		tempWeld.Part0 = self._Instance
 		tempWeld.Part1 = surfacePart
-		tempWeld.Parent = self._GrabPart
+		tempWeld.Parent = self._Instance
 	end
 
 	if self._DragTrove then
@@ -201,21 +224,32 @@ function PhysicsDragClient:StopDrag()
 		self._DragTrove = nil
 	end
 
-	-- Send drop request to server with the detected surface part
-	self._DragComm
+	-- Send drop request to server, returning the Promise
+	return self._DragComm
 		:SetOwnershipState(false, surfacePart, weldOffset)
-		:andThen(function()
+		:andThen(function(serverSuccess, serverStatus)
+			self._IsDropping = false -- Release the network lock
+
 			if tempWeld and tempWeld.Parent then
 				tempWeld:Destroy()
 			end
+
+			-- Ensure it resolves correctly to the WELD_REJECTED constant
+			if weldRejectedLocal or serverStatus == WELD_REJECTED then
+				return WELD_REJECTED
+			end
+
+			return true
 		end)
 		:catch(function(err)
+			self._IsDropping = false -- Release the network lock on error
 			if Shared.DEBUG then
 				warn("[PhysicsDrag] Failed to release ownership:", err)
 			end
 			if tempWeld and tempWeld.Parent then
 				tempWeld:Destroy()
 			end
+			return false
 		end)
 end
 
@@ -238,14 +272,14 @@ end
 function PhysicsDragClient:_GetGrabCFrame()
 	local raycastParams = RaycastParams.new()
 	raycastParams.FilterType = Enum.RaycastFilterType.Include
-	raycastParams.FilterDescendantsInstances = self._GrabPart:GetConnectedParts(true)
+	raycastParams.FilterDescendantsInstances = self._Instance:GetConnectedParts(true)
 
 	local result = MouseTouch:Raycast(raycastParams)
 
 	if result then
-		return CFrame.new(result.Position) * self._GrabPart:GetPivot().Rotation
+		return CFrame.new(result.Position) * self._Instance:GetPivot().Rotation
 	else
-		return self._GrabPart:GetPivot()
+		return self._Instance:GetPivot()
 	end
 end
 return PhysicsDragClient

@@ -12,4 +12,15 @@ SoundEffects.Tick = SoundUtils.MakeSound("rbxassetid://115167440192333", nil, 2)
 SoundEffects.Drag = SoundEffects.Tick -- A soft 'tick' for movement
 SoundEffects.Error = SoundUtils.MakeSound("rbxassetid://135474175518160")
 
+SoundEffects.Grab = SoundUtils.MakeSound("rbxassetid://90024299850259")
+SoundEffects.Place = SoundUtils.MakeSound("rbxassetid://138670023911106", nil, 2)
+
+SoundEffects.Pickup = {
+	Simple1 = SoundUtils.MakeSound("rbxassetid://85541442387239"),
+}
+
+SoundEffects.PutDown = {
+	Simple1 = SoundUtils.MakeSound("rbxassetid://129681143735039"),
+}
+
 return SoundEffects

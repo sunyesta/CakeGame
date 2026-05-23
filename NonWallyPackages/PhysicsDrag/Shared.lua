@@ -1,9 +1,13 @@
+-- STREAMING_CHUNK:Defining constants and requiring network property...
 local RunService = game:GetService("RunService")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local NetworkProperty = require(ReplicatedStorage.NonWallyPackages.NetworkProperty)
 
 local Shared = {}
 
-Shared.DEBUG = true
+Shared.DEBUG = false
 
+-- STREAMING_CHUNK:Handling Network Permissions...
 -- Returns true if the part is currently eligible for network ownership
 -- transfer. A part is ineligible when it is anchored OR when it is welded
 -- (directly or transitively) to an anchored part.
@@ -27,6 +31,7 @@ function Shared.CanSetOwnership(part: BasePart): (boolean, string?)
 	end
 end
 
+-- STREAMING_CHUNK:Handling logical validation checks...
 -- Universal check to see if a player is permitted to drag a part right now.
 function Shared.CanDrag(player: Player, part: BasePart): (boolean, string?)
 	local ownershipPart = Shared.GetOwnershipPart(part)
@@ -36,11 +41,11 @@ function Shared.CanDrag(player: Player, part: BasePart): (boolean, string?)
 	end
 
 	local ownerName = ownershipPart:GetAttribute("PhysicsDrag_NetworkOwner")
-	local isHeld = ownershipPart:GetAttribute("PhysicsDrag_IsHeld")
+	local isRootHeld = ownershipPart:GetAttribute("PhysicsDrag_IsRootHeld")
 
 	-- If another player currently owns the network physics of this part:
 	if ownerName and ownerName ~= player.Name then
-		if isHeld then
+		if isRootHeld then
 			return false, "Part is actively held by someone else"
 		end
 
@@ -48,15 +53,12 @@ function Shared.CanDrag(player: Player, part: BasePart): (boolean, string?)
 		local remainingTime = ownershipPart:GetAttribute("PhysicsDrag_RemainingLockedTime") or 0
 
 		if lockDuringSettle and remainingTime > 0 then
-			print(
-				"Owner locked",
-				{
-					ownerName = ownerName,
-					IsHeld = isHeld,
-					lockDuringSettle = lockDuringSettle,
-					remainingTime = remainingTime,
-				}
-			)
+			print("Owner locked", {
+				ownerName = ownerName,
+				IsRootHeld = isRootHeld,
+				lockDuringSettle = lockDuringSettle,
+				remainingTime = remainingTime,
+			})
 			return false,
 				tostring(part.Name)
 					.. " is settling and ownership is locked to "
@@ -72,6 +74,62 @@ function Shared.GetOwnershipPart(dragPart: BasePart): BasePart
 	-- Roblox natively handles designating one root part per connected stack.
 	-- If a stack splits, Roblox instantly assigns a new AssemblyRootPart!
 	return dragPart.AssemblyRootPart or dragPart
+end
+
+-- STREAMING_CHUNK:Validating weld capabilities...
+-- Prevents a player from welding a part to a surface owned by another player
+function Shared.CanWeld(player: Player, dragPart: BasePart, surfacePart: BasePart): (boolean, string?)
+	local ownershipPart = Shared.GetOwnershipPart(surfacePart)
+
+	local ownerName = ownershipPart:GetAttribute("PhysicsDrag_NetworkOwner")
+	local isRootHeld = ownershipPart:GetAttribute("PhysicsDrag_IsRootHeld")
+
+	-- If another player currently owns the network physics of the surface part:
+	if ownerName and ownerName ~= player.Name then
+		if isRootHeld then
+			return false, "Surface part is actively held by someone else"
+		end
+
+		local lockDuringSettle = ownershipPart:GetAttribute("PhysicsDrag_LockOwnershipDuringSettleTime")
+		local remainingTime = ownershipPart:GetAttribute("PhysicsDrag_RemainingLockedTime") or 0
+
+		if lockDuringSettle and remainingTime > 0 then
+			return false, "Surface part is settling and ownership is locked to " .. tostring(ownerName)
+		end
+	end
+
+	return true, nil
+end
+
+-- STREAMING_CHUNK:Networking Collision Group Changes...
+function Shared.TurnOffCollisions(dragPart)
+	-- print("Can collide")
+	for _, part in dragPart:GetConnectedParts(true) do
+		-- Initialize the NetworkProperty Binding.
+		local collisionGroup = NetworkProperty.fromInstanceProperty(part, "CollisionGroup")
+
+		if RunService:IsServer() then
+			-- Using literal string to prevent Shared package dependency issues.
+			collisionGroup:SetNetworkOwner(NetworkProperty.SYNCED_OWNERSHIP)
+		end
+
+		collisionGroup:Set("None")
+	end
+end
+
+function Shared.RestoreCollisions(dragPart)
+	-- print("can't collide")
+	for _, part in dragPart:GetConnectedParts(true) do
+		-- Initialize the NetworkProperty Binding.
+		local collisionGroup = NetworkProperty.fromInstanceProperty(part, "CollisionGroup")
+
+		if RunService:IsServer() then
+			-- Using literal string to prevent Shared package dependency issues.
+			collisionGroup:SetNetworkOwner(NetworkProperty.SYNCED_OWNERSHIP)
+		end
+
+		collisionGroup:Set("Default")
+	end
 end
 
 return Shared
