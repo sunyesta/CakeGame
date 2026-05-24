@@ -1,6 +1,7 @@
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local PlayerUtils = require(ReplicatedStorage.NonWallyPackages.PlayerUtils)
 local GetAssetByName = require(ReplicatedStorage.Common.Modules.GetAssetByName)
+local ModelUtils = require(ReplicatedStorage.NonWallyPackages.ModelUtils)
 local CharacterSetupService = {}
 
 function CharacterSetupService.GameStart()
@@ -13,6 +14,10 @@ function CharacterSetupService.GameStart()
 			-- local ChestCarryAttachment = TemplateChestCarryAttachment:Clone()
 			-- ChestCarryAttachment.Parent = character[TemplateChestCarryAttachment.Parent.Name]
 			-- print("temp", TemplateChestCarryAttachment.Position, ChestCarryAttachment.Position)
+
+			ModelUtils.ApplyToAllBaseParts(character, function(part)
+				part.CollisionGroup = "Players"
+			end)
 		end))
 	end)
 end

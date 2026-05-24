@@ -14,6 +14,7 @@ local SelectSimilar = require(script.Parent.Tools.SelectSimilar)
 local AspectRatioResizer = require(script.Parent.Tools.AspectRatioResizer)
 local MoveTool = require(script.Parent.Tools.MoveTool)
 local WeldTool = require(script.Parent.Tools.WeldTool) -- NEW REQUIRED MODULE
+local ReplaceAsset = require(script.Parent.Tools.ReplaceAsset)
 
 local THEME = Config.THEME
 local ICONS = Config.ICONS
@@ -184,6 +185,10 @@ function Widget.Init(plugin: Plugin, pluginTrove: any)
 	-- [[ 4J. WELD TOOL SECTION ]] --
 	local weldToolSection = WeldTool.Create()
 	weldToolSection.Parent = scrollFrame
+
+	-- [[ 4J. Replace TOOL SECTION ]] --
+	local replaceAssetSection = ReplaceAsset.Create()
+	replaceAssetSection.Parent = scrollFrame
 
 	-- [[ 5. ASSEMBLE WIDGET ]] --
 	header.Parent = mainContainer

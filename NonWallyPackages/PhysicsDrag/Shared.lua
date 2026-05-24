@@ -1,13 +1,9 @@
--- STREAMING_CHUNK:Defining constants and requiring network property...
 local RunService = game:GetService("RunService")
-local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local NetworkProperty = require(ReplicatedStorage.NonWallyPackages.NetworkProperty)
 
 local Shared = {}
 
 Shared.DEBUG = false
 
--- STREAMING_CHUNK:Handling Network Permissions...
 -- Returns true if the part is currently eligible for network ownership
 -- transfer. A part is ineligible when it is anchored OR when it is welded
 -- (directly or transitively) to an anchored part.
@@ -31,7 +27,6 @@ function Shared.CanSetOwnership(part: BasePart): (boolean, string?)
 	end
 end
 
--- STREAMING_CHUNK:Handling logical validation checks...
 -- Universal check to see if a player is permitted to drag a part right now.
 function Shared.CanDrag(player: Player, part: BasePart): (boolean, string?)
 	local ownershipPart = Shared.GetOwnershipPart(part)
@@ -76,7 +71,6 @@ function Shared.GetOwnershipPart(dragPart: BasePart): BasePart
 	return dragPart.AssemblyRootPart or dragPart
 end
 
--- STREAMING_CHUNK:Validating weld capabilities...
 -- Prevents a player from welding a part to a surface owned by another player
 function Shared.CanWeld(player: Player, dragPart: BasePart, surfacePart: BasePart): (boolean, string?)
 	local ownershipPart = Shared.GetOwnershipPart(surfacePart)
@@ -101,34 +95,17 @@ function Shared.CanWeld(player: Player, dragPart: BasePart, surfacePart: BasePar
 	return true, nil
 end
 
--- STREAMING_CHUNK:Networking Collision Group Changes...
 function Shared.TurnOffCollisions(dragPart)
-	-- print("Can collide")
+	print("Can collide")
 	for _, part in dragPart:GetConnectedParts(true) do
-		-- Initialize the NetworkProperty Binding.
-		local collisionGroup = NetworkProperty.fromInstanceProperty(part, "CollisionGroup")
-
-		if RunService:IsServer() then
-			-- Using literal string to prevent Shared package dependency issues.
-			collisionGroup:SetNetworkOwner(NetworkProperty.SYNCED_OWNERSHIP)
-		end
-
-		collisionGroup:Set("None")
+		part.CollisionGroup = "Draggable_Held"
 	end
 end
 
 function Shared.RestoreCollisions(dragPart)
-	-- print("can't collide")
+	print("can't collide")
 	for _, part in dragPart:GetConnectedParts(true) do
-		-- Initialize the NetworkProperty Binding.
-		local collisionGroup = NetworkProperty.fromInstanceProperty(part, "CollisionGroup")
-
-		if RunService:IsServer() then
-			-- Using literal string to prevent Shared package dependency issues.
-			collisionGroup:SetNetworkOwner(NetworkProperty.SYNCED_OWNERSHIP)
-		end
-
-		collisionGroup:Set("Default")
+		part.CollisionGroup = "Draggable"
 	end
 end
 

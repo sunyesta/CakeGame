@@ -1,3 +1,4 @@
+local ChangeHistoryService = game:GetService("ChangeHistoryService")
 local UserInputService = game:GetService("UserInputService")
 local Selection = game:GetService("Selection")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -108,6 +109,8 @@ function ExtraBehavior.Init(plugin, pluginTrove)
 				Props.SelectedObjects:Set({})
 				Selection:Set({})
 			end
+
+			ChangeHistoryService:SetWaypoint("Hide")
 		end
 	end
 

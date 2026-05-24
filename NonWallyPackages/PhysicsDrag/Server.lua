@@ -180,8 +180,8 @@ function PhysicsDragServer.CreateDragHandler(part: BasePart)
 				-- Update NetworkProperty
 				self._IsHeld:Set(false)
 
-				-- Force restore collisions locally on the server if the player disconnects abruptly
-				Shared.RestoreCollisions(self.Instance)
+				-- -- Force restore collisions locally on the server if the player disconnects abruptly
+				-- Shared.RestoreCollisions(self.Instance)
 
 				if self._SettleThread then
 					task.cancel(self._SettleThread)
@@ -268,8 +268,8 @@ function PhysicsDragServer.CreateDragHandler(part: BasePart)
 				newOwnershipPart:SetAttribute("PhysicsDrag_IsRootHeld", true)
 				newOwnershipPart:SetAttribute("PhysicsDrag_DragWelded", false)
 
-				-- Disable collisions authoritative via the server
-				Shared.TurnOffCollisions(self.Instance)
+				-- -- Disable collisions authoritative via the server
+				-- Shared.TurnOffCollisions(self.Instance)
 
 				if Shared.DEBUG then
 					print(`[PhysicsDrag] {player.Name} granted ownership`)
@@ -285,8 +285,8 @@ function PhysicsDragServer.CreateDragHandler(part: BasePart)
 					-- Update NetworkProperty
 					self._IsHeld:Set(false)
 
-					-- Restore collisions authoritative via the server
-					Shared.RestoreCollisions(self.Instance)
+					-- -- Restore collisions authoritative via the server
+					-- Shared.RestoreCollisions(self.Instance)
 
 					local serverWeldStatus = nil
 

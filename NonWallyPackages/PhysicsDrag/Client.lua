@@ -187,7 +187,7 @@ function PhysicsDragClient:StopDrag()
 	overlapParams.FilterDescendantsInstances = self._Instance:GetConnectedParts(true)
 
 	-- Inflate the bounding box slightly to detect parts we are resting on
-	local checkSize = self._Instance.Size + Vector3.new(0.2, 0.2, 0.2)
+	local checkSize = self._Instance.Size
 	local partsInBox = workspace:GetPartBoundsInBox(self._Instance.CFrame, checkSize, overlapParams)
 
 	local surfacePart, weldOffset = nil, nil

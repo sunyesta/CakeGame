@@ -15,6 +15,7 @@ local AspectRatioResizer = require(script.Parent.Tools.AspectRatioResizer)
 local MoveTool = require(script.Parent.Tools.MoveTool)
 local WeldTool = require(script.Parent.Tools.WeldTool) -- NEW REQUIRED MODULE
 local SeparateTool = require(script.Parent.Tools.SeparateTool)
+local ReplaceAsset = require(script.Parent.Tools.ReplaceAsset)
 
 local THEME = Config.THEME
 local ICONS = Config.ICONS
@@ -193,6 +194,10 @@ function Widget.Init(plugin: Plugin, pluginTrove: any)
 
 	local separateSection = SeparateTool.Create()
 	separateSection.Parent = scrollFrame
+
+	-- [[ 4J. Replace TOOL SECTION ]] --
+	local replaceAssetSection = ReplaceAsset.Create()
+	replaceAssetSection.Parent = scrollFrame
 
 	pluginTrove:Add(gui)
 

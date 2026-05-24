@@ -44,4 +44,21 @@ function SoundUtils.PlaySoundOnce(sound: Sound, parent)
 	soundClone:Destroy()
 end
 
+function SoundUtils.PlaySoundOnceWithRandomSpeed(sound: Sound, parent)
+	if not sound then
+		return
+	end
+
+	-- 1. Create a clone to allow overlapping
+	local soundClone = sound:Clone()
+
+	local randomSpeed = 0.9 + (math.random() * 0.2)
+	soundClone.PlaybackSpeed = randomSpeed
+
+	-- 2. Parent the clone
+	soundClone.Parent = parent or sound.Parent or game:GetService("SoundService")
+	soundClone.PlayOnRemove = true
+	soundClone:Destroy()
+end
+
 return SoundUtils

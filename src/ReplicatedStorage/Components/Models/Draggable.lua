@@ -63,9 +63,13 @@ function DraggableClient:Stop()
 	self._Trove:Clean()
 end
 
--- STREAMING_CHUNK:Handling the Loaded event and click detection...
+-- STREAMING_CHUNK:Handling the Loaded event, sudden impact sounds, and click detection...
 function DraggableClient:Loaded(RootPart, trove)
+	local isCurrentlyHeld = false
+
 	self._IsHeld:Observe(function(isHeld)
+		print("is held =", isHeld)
+		isCurrentlyHeld = isHeld
 		if isHeld then
 			print(true)
 			SoundUtils.PlaySoundOnce(self.PickupSound, self.Instance.PrimaryPart)
@@ -74,6 +78,31 @@ function DraggableClient:Loaded(RootPart, trove)
 			SoundUtils.PlaySoundOnce(self.PutDownSound, self.Instance.PrimaryPart)
 		end
 	end)
+
+	-- Monitor velocity to play put-down sound upon sudden impact/stops when not held
+	local VELOCITY_DROP_THRESHOLD = 15 -- Threshold for a "sudden stop"
+	local lastVelocity = RootPart.AssemblyLinearVelocity
+	local lastImpactSoundTime = 0
+
+	trove:Add(RunService.Heartbeat:Connect(function()
+		local currentVelocity = RootPart.AssemblyLinearVelocity
+
+		if not isCurrentlyHeld then
+			local velocityDelta = (lastVelocity - currentVelocity).Magnitude
+
+			-- If the object suddenly loses a lot of velocity (e.g. hits a surface)
+			if velocityDelta >= VELOCITY_DROP_THRESHOLD then
+				local currentTime = os.clock()
+				-- Add a 0.2s debounce to prevent sound spam when bouncing rapidly
+				if currentTime - lastImpactSoundTime > 0.2 then
+					SoundUtils.PlaySoundOnceWithRandomSpeed(self.PutDownSound, RootPart)
+					lastImpactSoundTime = currentTime
+				end
+			end
+		end
+
+		lastVelocity = currentVelocity
+	end))
 
 	local DRAG_THRESHOLD = 5
 

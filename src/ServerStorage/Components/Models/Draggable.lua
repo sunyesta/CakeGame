@@ -4,6 +4,7 @@ local Component = require(ReplicatedStorage.Packages.Component)
 local Trove = require(ReplicatedStorage.Packages.Trove)
 local ServerComm = require(ReplicatedStorage.Packages.Comm).ServerComm
 local PhysicsDrag = require(ReplicatedStorage.NonWallyPackages.PhysicsDrag)
+local ModelUtils = require(ReplicatedStorage.NonWallyPackages.ModelUtils)
 
 local Draggable = Component.new({
 	Tag = "Draggable",
@@ -15,6 +16,10 @@ function Draggable:Construct()
 
 	local dragHandler = self._Trove:Add(PhysicsDrag.CreateDragHandler(self.Instance.PrimaryPart))
 	dragHandler.SettleTime = 30
+
+	ModelUtils.ApplyToAllBaseParts(self.Instance, function(part)
+		part.CollisionGroup = "Draggable"
+	end)
 end
 
 function Draggable:Start() end
