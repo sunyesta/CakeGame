@@ -8,15 +8,12 @@ local Trove = require(ReplicatedStorage.Packages.Trove)
 local Property = require(ReplicatedStorage.NonWallyPackages.Property)
 
 local comm = ServerComm.new(script.Parent, "NetworkProperty")
-
 local setServerValueSignal = comm:CreateSignal("SetServerValue")
 
 local NetworkPropertyServer = {}
 NetworkPropertyServer.__index = NetworkPropertyServer
 
 NetworkPropertyServer.SYNCED_OWNERSHIP = NetworkPropertyShared.SYNCED
-
-local syncedInstances = {}
 
 -- STREAMING_CHUNK:Setting up NetworkProperty Cache...
 -- Tracks instances and their properties to prevent multiple overlapping binds
@@ -33,7 +30,7 @@ local function onInstanceDestroying(inst)
 end
 
 -- STREAMING_CHUNK:Implementing the Cached Require Method...
-function NetworkPropertyServer.require(inst, name, initialValue)
+function NetworkPropertyServer.require(inst, name, initialValue, networkOwnerType)
 	-- Initialize tracking for this Instance
 	if not networkPropertyCache[inst] then
 		networkPropertyCache[inst] = {}
@@ -52,6 +49,7 @@ function NetworkPropertyServer.require(inst, name, initialValue)
 
 	self._Trove = Trove.new()
 	self._Instance = inst
+	self._Name = name -- Added _Name reference needed for setting AutoMode attributes
 	self._CurrentOwnerType = nil
 
 	self._ServerValue = self._Trove:Add(
@@ -66,11 +64,7 @@ function NetworkPropertyServer.require(inst, name, initialValue)
 		self._ServerValue:Set(initialValue)
 	end
 
-	self._Trove:Add(function()
-		if self._CurrentOwnerType == NetworkPropertyShared.SYNCED then
-			self:_StopSyncingInstance()
-		end
-	end)
+	self:SetNetworkOwner(networkOwnerType)
 
 	self._RealDestroy = function(s)
 		s._Trove:Clean()
@@ -133,7 +127,6 @@ function NetworkPropertyServer.fromInstanceProperty(inst, propertyName)
 
 		-- Sync Network to Instance
 		bindTrove:Add(wrapper:Observe(function(val)
-			-- FIX: Prevent nil values from crashing strict instance properties
 			if val ~= nil and inst[propertyName] ~= val then
 				inst[propertyName] = val
 			end
@@ -152,76 +145,17 @@ function NetworkPropertyServer.fromInstanceProperty(inst, propertyName)
 	return wrapper
 end
 
--- STREAMING_CHUNK:Implementing sync logic...
-function NetworkPropertyServer:_StartSyncingInstance()
-	if not syncedInstances[self._Instance] then
-		local syncTrove = Trove.new()
-		syncedInstances[self._Instance] = {
-			Trove = syncTrove,
-			Count = 1,
-		}
-
-		syncTrove:Add(RunService.Stepped:Connect(function()
-			if self._Instance:CanSetNetworkOwnership() then
-				local owner = self._Instance:GetNetworkOwner()
-				local ownerName = owner and owner.Name or nil
-			end
-		end))
-	else
-		syncedInstances[self._Instance].Count += 1
-	end
-end
-
-function NetworkPropertyServer:_StopSyncingInstance()
-	if syncedInstances[self._Instance] then
-		syncedInstances[self._Instance].Count -= 1
-		if syncedInstances[self._Instance].Count <= 0 then
-			syncedInstances[self._Instance].Trove:Clean()
-			syncedInstances[self._Instance] = nil
-		end
-	end
-end
-
 -- STREAMING_CHUNK:Implementing standard class methods...
 function NetworkPropertyServer:SetNetworkOwner(ownerType)
-	if self._CurrentOwnerType == NetworkPropertyShared.SYNCED and ownerType ~= NetworkPropertyShared.SYNCED then
-		self:_StopSyncingInstance()
-	end
-
 	self._CurrentOwnerType = ownerType
 
-	if ownerType == NetworkPropertyShared.SYNCED then
-		if self._Instance:IsA("BasePart") then
-			if not syncedInstances[self._Instance] then
-				local syncTrove = Trove.new()
-				syncedInstances[self._Instance] = {
-					Trove = syncTrove,
-					Count = 0,
-				}
+	-- Flag if the property is currently allowing automatic client claims
+	local isAutoMode = (ownerType == NetworkPropertyShared.SYNCED)
+	self._Instance:SetAttribute(NetworkPropertyShared.GetAutoModeAttributeName(self._Name), isAutoMode)
 
-				syncTrove:Add(RunService.Stepped:Connect(function()
-					local physicalOwnerName = nil
-					if self._Instance:CanSetNetworkOwnership() then
-						local owner = self._Instance:GetNetworkOwner()
-						physicalOwnerName = owner and owner.Name or nil
-					end
-					self._Instance:SetAttribute("_SharedPhysicalNetworkOwner", physicalOwnerName)
-				end))
-			end
-
-			syncedInstances[self._Instance].Count += 1
-
-			self._Trove:Add(
-				self._Instance:GetAttributeChangedSignal("_SharedPhysicalNetworkOwner"):Connect(function()
-					if self._CurrentOwnerType == NetworkPropertyShared.SYNCED then
-						self._ActiveNetworkOwnerName:Set(self._Instance:GetAttribute("_SharedPhysicalNetworkOwner"))
-					end
-				end),
-				"Disconnect"
-			)
-
-			self._ActiveNetworkOwnerName:Set(self._Instance:GetAttribute("_SharedPhysicalNetworkOwner"))
-		end
+	if isAutoMode then
+		-- Automatically given to the client that claims it via remote function
+		-- Do not wipe existing owner immediately, let it transition smoothly when next claimed
 	elseif typeof(ownerType) == "Instance" and ownerType:IsA("Player") then
 		self._ActiveNetworkOwnerName:Set(ownerType.Name)
 	else
@@ -262,6 +196,28 @@ setServerValueSignal:Connect(function(player, inst, name, value)
 	end
 
 	netProp:Destroy()
+end)
+
+-- STREAMING_CHUNK:Handling incoming Auto Ownership Claims...
+comm:BindFunction("ClaimAutoOwnership", function(player, inst, name, value)
+	if typeof(inst) ~= "Instance" or type(name) ~= "string" then
+		return false
+	end
+
+	local netProp = NetworkPropertyServer.require(inst, name)
+	local claimSuccess = false
+
+	-- Verify that the property is still actively accepting Auto Claims
+	if netProp._CurrentOwnerType == NetworkPropertyShared.SYNCED then
+		netProp._ActiveNetworkOwnerName:Set(player.Name)
+		if value ~= nil then
+			netProp:Set(value)
+		end
+		claimSuccess = true
+	end
+
+	netProp:Destroy()
+	return claimSuccess
 end)
 
 return NetworkPropertyServer

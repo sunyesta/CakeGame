@@ -12,6 +12,7 @@ local Shared = require(script.Parent.Shared)
 local AlignCFrame = require(ReplicatedStorage.NonWallyPackages.AlignCFrame)
 local Signal = require(ReplicatedStorage.Packages.Signal)
 local NetworkProperty = require(ReplicatedStorage.NonWallyPackages.NetworkProperty)
+local Property = require(ReplicatedStorage.NonWallyPackages.Property)
 local Player = Players.LocalPlayer
 
 local WELD_REJECTED = "weld rejected"
@@ -32,7 +33,7 @@ local defaultPhysicsStyle = function(
 	grabAttachment.Visible = false
 	grabAttachment.WorldCFrame = grabPart:GetPivot()
 
-	AlignCFrame.new(grabPart, grabAttachment, originAttachment)
+	dragTrove:Add(AlignCFrame.new(grabPart, grabAttachment, originAttachment))
 end
 
 local function createPhysicsOriginPart(grabPart: BasePart)
@@ -60,6 +61,7 @@ function PhysicsDragClient.new(grabPart: BasePart)
 	self._DragComm = ClientComm.new(grabPart, true, "_PhysicsDragComm"):BuildObject()
 	self._Instance = grabPart
 	self._PhysicsStyle = defaultPhysicsStyle
+	self._Init = function() end
 
 	self._IsHeld = NetworkProperty.require(grabPart, "IsHeld", false)
 	self._IsDropping = false -- Lock to prevent spam-clicking and attribute bouncing
@@ -98,15 +100,13 @@ function PhysicsDragClient:StartDrag(grabPos: Vector3?)
 			self._Instance:SetAttribute("PhysicsDrag_IsHeld", false)
 		end)
 
-		-- Instantly unweld locally while we wait for the server verification
-		local tempWeld = self._Instance:FindFirstChild("ClientTempPhysicsDragWeld")
-		if tempWeld then
-			tempWeld:Destroy()
-		end
-
-		local serverWeld = self._Instance:FindFirstChild("PhysicsDragWeld")
-		if serverWeld then
-			serverWeld:Destroy()
+		for _, constraint in self._Instance:GetJoints() do
+			if
+				constraint.Name == "ClientTempPhysicsDragWeld"
+				or constraint.Name == "PhysicsDragWeld" and constraint.Part1 == self._Instance
+			then
+				constraint:Destroy()
+			end
 		end
 
 		-- -- Turn off collisions immediately for the client
@@ -126,6 +126,7 @@ function PhysicsDragClient:StartDrag(grabPos: Vector3?)
 			self._GeometricDrag:SetDragStyle(self._CustomDragStyle)
 		end
 
+		self._Init(dragTrove)
 		self._PhysicsStyle(physicsOriginPart, self._Instance, grabPos, dragTrove)
 		self._GeometricDrag:StartDrag()
 
@@ -181,44 +182,6 @@ function PhysicsDragClient:StopDrag()
 	self._IsHeld:Set(false)
 	self._IsDropping = true -- Engage the network lock
 
-	-- Detect if we are dropping onto a Surface
-	local overlapParams = OverlapParams.new()
-	overlapParams.FilterType = Enum.RaycastFilterType.Exclude
-	overlapParams.FilterDescendantsInstances = self._Instance:GetConnectedParts(true)
-
-	-- Inflate the bounding box slightly to detect parts we are resting on
-	local checkSize = self._Instance.Size
-	local partsInBox = workspace:GetPartBoundsInBox(self._Instance.CFrame, checkSize, overlapParams)
-
-	local surfacePart, weldOffset = nil, nil
-	local weldRejectedLocal = false
-
-	for _, part in partsInBox do
-		if part:HasTag("Surface") then
-			local canWeld, reason = Shared.CanWeld(Player, self._Instance, part)
-			if canWeld then
-				surfacePart = part
-				weldOffset = surfacePart.CFrame:ToObjectSpace(self._Instance.CFrame)
-				weldRejectedLocal = false -- Found a valid surface!
-				break
-			else
-				weldRejectedLocal = true
-				if Shared.DEBUG then
-					warn(`[PhysicsDrag] Client rejected weld: {reason}`)
-				end
-			end
-		end
-	end
-
-	local tempWeld = nil
-	if surfacePart then
-		tempWeld = Instance.new("WeldConstraint")
-		tempWeld.Name = "ClientTempPhysicsDragWeld"
-		tempWeld.Part0 = self._Instance
-		tempWeld.Part1 = surfacePart
-		tempWeld.Parent = self._Instance
-	end
-
 	if self._DragTrove then
 		self._DragTrove:Clean()
 		self._DragTrove = nil
@@ -226,19 +189,9 @@ function PhysicsDragClient:StopDrag()
 
 	-- Send drop request to server, returning the Promise
 	return self._DragComm
-		:SetOwnershipState(false, surfacePart, weldOffset)
+		:SetOwnershipState(false)
 		:andThen(function(serverSuccess, serverStatus)
 			self._IsDropping = false -- Release the network lock
-
-			if tempWeld and tempWeld.Parent then
-				tempWeld:Destroy()
-			end
-
-			-- Ensure it resolves correctly to the WELD_REJECTED constant
-			if weldRejectedLocal or serverStatus == WELD_REJECTED then
-				return WELD_REJECTED
-			end
-
 			return true
 		end)
 		:catch(function(err)
@@ -246,9 +199,48 @@ function PhysicsDragClient:StopDrag()
 			if Shared.DEBUG then
 				warn("[PhysicsDrag] Failed to release ownership:", err)
 			end
+			return false
+		end)
+end
+
+function PhysicsDragClient:Weld(surfacePart)
+	local weldOffset = surfacePart.CFrame:ToObjectSpace(self._Instance.CFrame)
+
+	if not surfacePart then
+		return Promise.resolve(false, "No valid surface found to weld to")
+	end
+
+	if not Shared.CanWeld(Player, self._Instance, surfacePart) then
+		print("weld rejected on client")
+		return
+	end
+
+	-- Temporarily weld locally to keep it visually snappy while waiting for server response
+	local tempWeld = Instance.new("WeldConstraint")
+	tempWeld.Name = "ClientTempPhysicsDragWeld"
+	tempWeld.Part0 = self._Instance
+	tempWeld.Part1 = surfacePart
+	tempWeld.Parent = self._Instance
+
+	return self._DragComm
+		:Weld(surfacePart, weldOffset)
+		:andThen(function(serverSuccess, serverStatus)
 			if tempWeld and tempWeld.Parent then
 				tempWeld:Destroy()
 			end
+
+			if not serverSuccess or serverStatus == WELD_REJECTED then
+				print(serverStatus, self._Instance, surfacePart, weldOffset)
+				return WELD_REJECTED
+			end
+
+			return true
+		end)
+		:catch(function(err)
+			if tempWeld and tempWeld.Parent then
+				tempWeld:Destroy()
+			end
+			warn("[PhysicsDrag] Network error during weld request:", err)
 			return false
 		end)
 end
@@ -282,4 +274,10 @@ function PhysicsDragClient:_GetGrabCFrame()
 		return self._Instance:GetPivot()
 	end
 end
+
+-- is called after welds are broken but before dragging starts
+function PhysicsDragClient:OnInit(callback)
+	self._Init = callback
+end
+
 return PhysicsDragClient

@@ -30,6 +30,7 @@ local SoundUtils = require(ReplicatedStorage.NonWallyPackages.SoundUtils)
 local SoundEffects = require(script.SoundEffects)
 local LayeredTexture = require(script.Modules.LayeredTexture)
 local Input = require(ReplicatedStorage.Packages.Input)
+local Config = require(script.Config)
 
 local Keyboard = Input.Keyboard.new()
 
@@ -397,7 +398,7 @@ function ModelEditorController.SelectMaterialFromPart(part)
 end
 
 function ModelEditorController.GetDataWithoutSaving()
-	return ModelEditorUtils.Save(Props.Config.BuildPlatform, Props.Instances.ModelsFolder)
+	return ModelEditorUtils.Save()
 end
 
 -- make save pull from last undo step
@@ -410,7 +411,7 @@ end
 function ModelEditorController.Load(loadData)
 	loadData = loadData
 	if loadData then
-		local models = ModelEditorUtils.Load(Props.Config.BuildPlatform, Props.Instances.ModelsFolder, loadData)
+		local models = ModelEditorUtils.Load(loadData)
 		for _, model in models do
 			Props.ActiveTrove:Add(model)
 		end
@@ -580,6 +581,8 @@ ModelEditorController.Enums = Enums
 ModelEditorController.ActiveGizmo = Props.ActiveGizmo
 ModelEditorController.TransformGizmoMode = Props.TransformGizmoMode
 ModelEditorController.SnapOn = Props.SnapOn
+
+ModelEditorController.Config = Config
 
 -- settable properties
 ModelEditorController.BoundsPart = Props.BoundsPart

@@ -180,9 +180,6 @@ function PhysicsDragServer.CreateDragHandler(part: BasePart)
 				-- Update NetworkProperty
 				self._IsHeld:Set(false)
 
-				-- -- Force restore collisions locally on the server if the player disconnects abruptly
-				-- Shared.RestoreCollisions(self.Instance)
-
 				if self._SettleThread then
 					task.cancel(self._SettleThread)
 					self._SettleThread = nil
@@ -212,150 +209,146 @@ function PhysicsDragServer.CreateDragHandler(part: BasePart)
 	self._Trove:Add(RunService.Heartbeat:Connect(refreshOwnership))
 
 	-- STREAMING_CHUNK:Handling SetOwnershipState requests...
-	self._Comm:BindFunction(
-		"SetOwnershipState",
-		function(player: Player, wantsOwnership: boolean, droppedOnPart: BasePart?, weldOffset: CFrame?)
-			if wantsOwnership then
-				local canDrag, reason = Shared.CanDrag(player, self.Instance)
-				if not canDrag then
-					if Shared.DEBUG then
-						warn(`[PhysicsDrag] {player.Name} rejected: {reason}`)
-					end
-					return false, reason
+	self._Comm:BindFunction("SetOwnershipState", function(player: Player, wantsOwnership: boolean)
+		if wantsOwnership then
+			local canDrag, reason = Shared.CanDrag(player, self.Instance)
+			if not canDrag then
+				if Shared.DEBUG then
+					warn(`[PhysicsDrag] {player.Name} rejected: {reason}`)
 				end
+				return false, reason
+			end
+
+			-- Update NetworkProperty
+			self._IsHeld:Set(true)
+
+			-- 1. Get current ownership part BEFORE unwelding
+			local originalOwnershipPart = Shared.GetOwnershipPart(self.Instance)
+
+			-- 2. Server Unweld: Break before we lock network ownership
+			for _, constraint in self.Instance:GetJoints() do
+				if constraint.Name == "PhysicsDragWeld" and constraint.Part1 == self.Instance then
+					print("server joint", constraint)
+					constraint:Destroy()
+				end
+			end
+
+			-- 3. Get NEW ownership part AFTER unwelding (in case the stack split)
+			local newOwnershipPart = Shared.GetOwnershipPart(self.Instance)
+
+			-- 4. Transfer attributes if a split occurred
+			if originalOwnershipPart ~= newOwnershipPart then
+				local lockSettle = originalOwnershipPart:GetAttribute("PhysicsDrag_LockOwnershipDuringSettleTime")
+				local remainTime = originalOwnershipPart:GetAttribute("PhysicsDrag_RemainingLockedTime")
+
+				if lockSettle ~= nil then
+					newOwnershipPart:SetAttribute("PhysicsDrag_LockOwnershipDuringSettleTime", lockSettle)
+				end
+				if remainTime ~= nil then
+					newOwnershipPart:SetAttribute("PhysicsDrag_RemainingLockedTime", remainTime)
+				end
+			end
+
+			if self._SettleThread then
+				task.cancel(self._SettleThread)
+				self._SettleThread = nil
+				newOwnershipPart:SetAttribute("PhysicsDrag_RemainingLockedTime", 0)
+			end
+
+			-- STREAMING_CHUNK:Assigning active hold state...
+			newOwnershipPart:SetNetworkOwner(player)
+			self._IsActivelyHeld = true
+			self._ActiveOwnerName = player.Name
+
+			newOwnershipPart:SetAttribute("PhysicsDrag_NetworkOwner", player.Name)
+			newOwnershipPart:SetAttribute("PhysicsDrag_IsRootHeld", true)
+			newOwnershipPart:SetAttribute("PhysicsDrag_DragWelded", false)
+
+			if Shared.DEBUG then
+				print(`[PhysicsDrag] {player.Name} granted ownership`)
+			end
+			return true
+		else
+			local ownershipPart = Shared.GetOwnershipPart(self.Instance)
+
+			if self._ActiveOwnerName == player.Name then
+				self._IsActivelyHeld = false
+				ownershipPart:SetAttribute("PhysicsDrag_IsRootHeld", false)
 
 				-- Update NetworkProperty
-				self._IsHeld:Set(true)
+				self._IsHeld:Set(false)
 
-				-- 1. Get current ownership part BEFORE unwelding
-				local originalOwnershipPart = Shared.GetOwnershipPart(self.Instance)
+				self._SettleEndTime = os.clock() + self.SettleTime
 
-				-- 2. Server Unweld: Break before we lock network ownership
-				local existingWeld = self.Instance:FindFirstChild("PhysicsDragWeld")
-				if existingWeld then
-					existingWeld:Destroy()
-				end
+				-- STREAMING_CHUNK:Spawning the settle thread...
+				self._SettleThread = task.spawn(function()
+					task.wait(self.SettleTime)
 
-				-- 3. Get NEW ownership part AFTER unwelding (in case the stack split)
-				local newOwnershipPart = Shared.GetOwnershipPart(self.Instance)
-
-				-- 4. Transfer attributes if a split occurred
-				if originalOwnershipPart ~= newOwnershipPart then
-					local lockSettle = originalOwnershipPart:GetAttribute("PhysicsDrag_LockOwnershipDuringSettleTime")
-					local remainTime = originalOwnershipPart:GetAttribute("PhysicsDrag_RemainingLockedTime")
-
-					if lockSettle ~= nil then
-						newOwnershipPart:SetAttribute("PhysicsDrag_LockOwnershipDuringSettleTime", lockSettle)
+					if not self._IsActivelyHeld then
+						-- Re-evaluate ownership part since it could have changed during settle
+						local currentOwnershipPart = Shared.GetOwnershipPart(self.Instance)
+						if currentOwnershipPart and currentOwnershipPart.Parent then
+							currentOwnershipPart:SetAttribute("PhysicsDrag_NetworkOwner", nil)
+							currentOwnershipPart:SetAttribute("PhysicsDrag_RemainingLockedTime", 0)
+							assignOwnershipToNearestPlayer(currentOwnershipPart)
+						end
+						-- Clean up the active owner record now that the settle is complete
+						self._ActiveOwnerName = nil
 					end
-					if remainTime ~= nil then
-						newOwnershipPart:SetAttribute("PhysicsDrag_RemainingLockedTime", remainTime)
-					end
-					-- We deliberately do NOT copy IsRootHeld, as only one part can drag at a time.
-				end
 
-				if self._SettleThread then
-					task.cancel(self._SettleThread)
 					self._SettleThread = nil
-					newOwnershipPart:SetAttribute("PhysicsDrag_RemainingLockedTime", 0)
-				end
+				end)
 
-				-- STREAMING_CHUNK:Assigning active hold state...
-				newOwnershipPart:SetNetworkOwner(player)
-				self._IsActivelyHeld = true
-				self._ActiveOwnerName = player.Name
-
-				newOwnershipPart:SetAttribute("PhysicsDrag_NetworkOwner", player.Name)
-				newOwnershipPart:SetAttribute("PhysicsDrag_IsRootHeld", true)
-				newOwnershipPart:SetAttribute("PhysicsDrag_DragWelded", false)
-
-				-- -- Disable collisions authoritative via the server
-				-- Shared.TurnOffCollisions(self.Instance)
-
-				if Shared.DEBUG then
-					print(`[PhysicsDrag] {player.Name} granted ownership`)
-				end
 				return true
-			else
-				local ownershipPart = Shared.GetOwnershipPart(self.Instance)
+			end
 
-				if self._ActiveOwnerName == player.Name then
-					self._IsActivelyHeld = false
-					ownershipPart:SetAttribute("PhysicsDrag_IsRootHeld", false)
+			if Shared.DEBUG then
+				warn(`[PhysicsDrag] {player.Name} rejected drop: Does not own part`)
+			end
+			return false, "Does not own part"
+		end
+	end)
 
-					-- Update NetworkProperty
-					self._IsHeld:Set(false)
+	-- STREAMING_CHUNK:Handling distinct Weld requests...
+	self._Comm:BindFunction("Weld", function(player: Player, weldTo: BasePart, weldOffset: CFrame)
+		if not (weldTo and typeof(weldTo) == "Instance" and weldTo:IsA("BasePart") and weldOffset) then
+			return false, "Invalid weld parameters"
+		end
 
-					-- -- Restore collisions authoritative via the server
-					-- Shared.RestoreCollisions(self.Instance)
+		local canWeld, weldReason = Shared.CanWeld(player, self.Instance, weldTo)
+		if not canWeld then
+			if Shared.DEBUG then
+				warn(`[PhysicsDrag] Server rejected weld from {player.Name}: {weldReason}`)
+			end
+			return false, "weld rejected"
+		end
 
-					local serverWeldStatus = nil
-
-					-- Apply Server-Authoritative Weld if Dropped on Surface
-					if
-						droppedOnPart
-						and typeof(droppedOnPart) == "Instance"
-						and droppedOnPart:IsA("BasePart")
-						and droppedOnPart:HasTag("Surface")
-						and weldOffset
-					then
-						local canWeld, weldReason = Shared.CanWeld(player, self.Instance, droppedOnPart)
-
-						if canWeld then
-							-- Force the server to instantly snap the part to the client's reported position
-							self.Instance:PivotTo(droppedOnPart.CFrame * weldOffset)
-
-							-- Use a standard Weld with the C0 offset provided by the client
-							self.Instance.CFrame = droppedOnPart.CFrame:ToWorldSpace(weldOffset)
-							local weld = Instance.new("WeldConstraint")
-							weld.Name = "PhysicsDragWeld"
-							weld.Part0 = droppedOnPart
-							weld.Part1 = self.Instance
-							weld.Parent = self.Instance
-
-							ownershipPart:SetAttribute("PhysicsDrag_DragWelded", true)
-
-							if Shared.DEBUG then
-								print(`[PhysicsDrag] Welded {self.Instance.Name} to surface {droppedOnPart.Name}`)
-							end
-						else
-							serverWeldStatus = "weld rejected"
-							if Shared.DEBUG then
-								warn(`[PhysicsDrag] Server rejected weld from {player.Name}: {weldReason}`)
-							end
-						end
-					end
-
-					self._SettleEndTime = os.clock() + self.SettleTime
-
-					-- STREAMING_CHUNK:Spawning the settle thread...
-					self._SettleThread = task.spawn(function()
-						task.wait(self.SettleTime)
-
-						if not self._IsActivelyHeld then
-							-- Re-evaluate ownership part since it could have changed during settle
-							local currentOwnershipPart = Shared.GetOwnershipPart(self.Instance)
-							if currentOwnershipPart and currentOwnershipPart.Parent then
-								currentOwnershipPart:SetAttribute("PhysicsDrag_NetworkOwner", nil)
-								currentOwnershipPart:SetAttribute("PhysicsDrag_RemainingLockedTime", 0)
-								assignOwnershipToNearestPlayer(currentOwnershipPart)
-							end
-							-- Clean up the active owner record now that the settle is complete
-							self._ActiveOwnerName = nil
-						end
-
-						self._SettleThread = nil
-					end)
-
-					return true, serverWeldStatus
-				end
-
-				if Shared.DEBUG then
-					warn(`[PhysicsDrag] {player.Name} rejected drop: Does not own part`)
-				end
-				return false, "Does not own part"
+		for _, constraint in self.Instance:GetJoints() do
+			print("server joint", constraint)
+			if constraint.Name == "PhysicsDragWeld" and constraint.Part1 == self.Instance then
+				constraint:Destroy()
 			end
 		end
-	)
+
+		-- Force the server to instantly snap the part to the client's reported position
+		self.Instance.CFrame = (weldTo.CFrame * weldOffset)
+
+		-- Use a standard WeldConstraint
+		local weld = Instance.new("WeldConstraint")
+		weld.Name = "PhysicsDragWeld"
+		weld.Part0 = weldTo
+		weld.Part1 = self.Instance
+		weld.Parent = self.Instance
+
+		local ownershipPart = Shared.GetOwnershipPart(self.Instance)
+		ownershipPart:SetAttribute("PhysicsDrag_DragWelded", true)
+
+		if Shared.DEBUG then
+			print(`[PhysicsDrag] Welded {self.Instance.Name} to surface {weldTo.Name}`)
+		end
+
+		return true, "Weld successful"
+	end)
 
 	return self
 end

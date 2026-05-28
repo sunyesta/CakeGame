@@ -2,7 +2,6 @@ local HttpService = game:GetService("HttpService")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local Assert = require(ReplicatedStorage.NonWallyPackages.Assert)
-local WeldUtils = require(ReplicatedStorage.NonWallyPackages.WeldUtils)
 local InstanceUtils = require(ReplicatedStorage.NonWallyPackages.InstanceUtils)
 local TableUtil = require(ReplicatedStorage.Packages.TableUtil)
 local GetAssetByName = require(ReplicatedStorage.Common.Modules.GetAssetByName)
@@ -15,6 +14,8 @@ local ModelEditorServerSafeUtils = {}
 ModelEditorServerSafeUtils.WELD_NAME = "ModelEditorWeld"
 ModelEditorServerSafeUtils.NOT_INTERACTIVE_ATTRIBUTE_NAME = "NonInteractive"
 ModelEditorServerSafeUtils.DiscardingTag = "ModelEditor_IsDiscarding"
+
+-- TODO fix combining cake stacks
 
 function ModelEditorServerSafeUtils.RequireWeld(model: Model)
 	local weld = model:FindFirstChild(ModelEditorServerSafeUtils.WELD_NAME)
@@ -37,7 +38,9 @@ function ModelEditorServerSafeUtils.SetWeldTarget(model: Model, otherPart: BaseP
 	local oldEnabled = weld.Enabled
 	weld.Enabled = false
 
-	WeldUtils.Weld(model.PrimaryPart, otherPart, weld)
+	weld.Part0 = otherPart
+	weld.Part1 = model.PrimaryPart
+
 	weld.Enabled = oldEnabled
 end
 
@@ -64,9 +67,23 @@ function ModelEditorServerSafeUtils.BreakWeld(model: Model)
 	end
 end
 
-function ModelEditorServerSafeUtils.GetWeldedPart(model: Model)
+function ModelEditorServerSafeUtils.GetWeldedPart(model: Model, completeSearch)
 	local weld = model:FindFirstChild(ModelEditorServerSafeUtils.WELD_NAME)
-	return weld and weld.Part1
+
+	if (not weld) and completeSearch then
+		local oldParent = model.Parent
+		model.Parent = workspace
+		for _, joint in model.PrimaryPart:GetJoints() do
+			if joint.Name == ModelEditorServerSafeUtils.WELD_NAME and joint.Part1 == model.PrimaryPart then
+				weld = joint
+				break
+			end
+		end
+
+		model.Parent = oldParent
+	end
+
+	return weld and weld.Part0
 end
 
 function ModelEditorServerSafeUtils.CreateModel(assetName: string): Model
@@ -90,11 +107,7 @@ function ModelEditorServerSafeUtils.CreateModel(assetName: string): Model
 end
 
 -- We pass `extractMaterialsCallback` so the client can save UI textures, but the server doesn't crash trying to find them.
-function ModelEditorServerSafeUtils.Save(
-	buildPlatform: Model,
-	folder: Folder,
-	extractMaterialsCallback: ((Model) -> any)?
-)
+function ModelEditorServerSafeUtils.Save(buildPlatform: Model, folder: Folder)
 	local modelDataList = {}
 
 	-- Get the bounding box of the build platform to find its center CFrame and Size
@@ -104,7 +117,7 @@ function ModelEditorServerSafeUtils.Save(
 	local topSurfaceCFrame = platformCFrame * CFrame.new(0, platformSize.Y / 2, 0)
 
 	for _, model in folder:GetChildren() do
-		local weldTo = ModelEditorServerSafeUtils.GetWeldedPart(model)
+		local weldTo = ModelEditorServerSafeUtils.GetWeldedPart(model, true)
 		local symData = model:GetAttribute("SymmetryData")
 		local symTotal = model:GetAttribute("SymmetryTotal")
 
@@ -119,7 +132,7 @@ function ModelEditorServerSafeUtils.Save(
 			Scale = model:GetScale(),
 
 			-- Call the client injection function if it exists
-			Materials = if extractMaterialsCallback then extractMaterialsCallback(model) else {},
+			Materials = LayeredTexture.SaveGroup(model, true),
 
 			SymmetricalTo = model:GetAttribute("SymmetricalTo"),
 			SymmetryData = if symData then { symData.X, symData.Y, symData.Z } else nil,
@@ -133,12 +146,7 @@ function ModelEditorServerSafeUtils.Save(
 end
 
 -- We pass `applyMaterialsCallback` so the client can apply textures while the server safely ignores them.
-function ModelEditorServerSafeUtils.Load(
-	buildPlatform: Model,
-	parent: Instance,
-	data: table,
-	applyMaterialsCallback: ((Model, table) -> nil)?
-)
+function ModelEditorServerSafeUtils.Load(buildPlatform: Model, parent: Instance, data: table)
 	local models = {}
 	local createdModelsMap = {}
 
@@ -188,6 +196,48 @@ function ModelEditorServerSafeUtils.Load(
 	end
 
 	return TableUtil.Values(models)
+end
+
+function ModelEditorServerSafeUtils.SaveFromModels(buildPlatform, models, weldName)
+	local saveFolder = Instance.new("Folder")
+
+	local oldParents = {}
+	for _, model in models do
+		-- Safely get the root part (Handles both Models and BaseParts)
+		local rootPart = model:IsA("Model") and model.PrimaryPart or model
+
+		if rootPart then
+			for _, joint in rootPart:GetJoints() do
+				if joint.Name == weldName then
+					joint.Name = ModelEditorServerSafeUtils.WELD_NAME
+					joint.Parent = model
+				end
+			end
+		end
+
+		oldParents[model] = model.Parent
+		model.Parent = saveFolder
+	end
+
+	local modelData = ModelEditorServerSafeUtils.Save(buildPlatform, saveFolder)
+
+	for _, model in models do
+		model.Parent = oldParents[model]
+
+		-- Safely restore the joints
+		local rootPart = model:IsA("Model") and model.PrimaryPart or model
+		if rootPart then
+			for _, joint in rootPart:GetJoints() do
+				if joint.Name == ModelEditorServerSafeUtils.WELD_NAME then
+					joint.Name = weldName
+				end
+			end
+		end
+	end
+
+	saveFolder:Destroy()
+
+	return modelData
 end
 
 return ModelEditorServerSafeUtils

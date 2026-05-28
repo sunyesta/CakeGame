@@ -30,14 +30,11 @@ end
 -- Universal check to see if a player is permitted to drag a part right now.
 function Shared.CanDrag(player: Player, part: BasePart): (boolean, string?)
 	local ownershipPart = Shared.GetOwnershipPart(part)
-	local canSet, reason = Shared.CanSetOwnership(ownershipPart)
-	if not canSet then
-		return false, reason or "Cannot set network ownership"
-	end
 
 	local ownerName = ownershipPart:GetAttribute("PhysicsDrag_NetworkOwner")
 	local isRootHeld = ownershipPart:GetAttribute("PhysicsDrag_IsRootHeld")
 
+	-- 1. Check permissions based on the CURRENT assembly root
 	-- If another player currently owns the network physics of this part:
 	if ownerName and ownerName ~= player.Name then
 		if isRootHeld then
@@ -48,12 +45,14 @@ function Shared.CanDrag(player: Player, part: BasePart): (boolean, string?)
 		local remainingTime = ownershipPart:GetAttribute("PhysicsDrag_RemainingLockedTime") or 0
 
 		if lockDuringSettle and remainingTime > 0 then
-			print("Owner locked", {
-				ownerName = ownerName,
-				IsRootHeld = isRootHeld,
-				lockDuringSettle = lockDuringSettle,
-				remainingTime = remainingTime,
-			})
+			if Shared.DEBUG then
+				print("Owner locked", {
+					ownerName = ownerName,
+					IsRootHeld = isRootHeld,
+					lockDuringSettle = lockDuringSettle,
+					remainingTime = remainingTime,
+				})
+			end
 			return false,
 				tostring(part.Name)
 					.. " is settling and ownership is locked to "
@@ -62,6 +61,30 @@ function Shared.CanDrag(player: Player, part: BasePart): (boolean, string?)
 					.. player.Name
 		end
 	end
+
+	-- 2. Temporarily unweld drag welds to simulate if the part WOULD be free
+	local tempWelds = {}
+	for _, child in part:GetChildren() do
+		if child:IsA("WeldConstraint") or child:IsA("Weld") or child:IsA("JointInstance") then
+			if child.Name == "PhysicsDragWeld" or child.Name == "ClientTempPhysicsDragWeld" then
+				table.insert(tempWelds, { weld = child, parent = child.Parent })
+				child.Parent = nil -- Instantly breaks the physics assembly
+			end
+		end
+	end
+
+	-- 3. Check if it can be physically owned (not natively anchored or permanently welded to an anchor)
+	local canSet, reason = Shared.CanSetOwnership(part)
+
+	-- 4. Restore the drag welds immediately
+	for _, data in tempWelds do
+		data.weld.Parent = data.parent
+	end
+
+	if not canSet then
+		return false, reason or "Cannot set network ownership"
+	end
+
 	return true, nil
 end
 
@@ -96,14 +119,18 @@ function Shared.CanWeld(player: Player, dragPart: BasePart, surfacePart: BasePar
 end
 
 function Shared.TurnOffCollisions(dragPart)
-	print("Can collide")
+	if Shared.DEBUG then
+		print("Can collide")
+	end
 	for _, part in dragPart:GetConnectedParts(true) do
 		part.CollisionGroup = "Draggable_Held"
 	end
 end
 
 function Shared.RestoreCollisions(dragPart)
-	print("can't collide")
+	if Shared.DEBUG then
+		print("can't collide")
+	end
 	for _, part in dragPart:GetConnectedParts(true) do
 		part.CollisionGroup = "Draggable"
 	end

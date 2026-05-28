@@ -183,11 +183,6 @@ function CakeDecoratorGui.Open()
 	-- start the model editor controller
 	ModelEditorController.BoundsPart:Set(Workspace:WaitForChild("CakeDecoratorArea"):WaitForChild("CakeEditorBounds"))
 	ModelEditorController.Start("CakeDecorator")
-	local holdingCake = PlayerContext.HoldingCake:Get()
-	if holdingCake then
-		ModelEditorController.Load(holdingCake:GetAttribute("CakeData"))
-		PlayerComm:RemoveCakeTool(holdingCake)
-	end
 
 	Cameras.CakeCamera.Priority = GameEnums.CameraPriorities.PlayerCameraOverride
 	Cinemachine.Brain:RefreshPriority()

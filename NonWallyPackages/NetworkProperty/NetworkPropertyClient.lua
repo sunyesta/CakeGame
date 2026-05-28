@@ -9,6 +9,7 @@ local Property = require(ReplicatedStorage.NonWallyPackages.Property)
 
 local comm = ClientComm.new(script.Parent, false, "NetworkProperty")
 local setServerValueSignal = comm:GetSignal("SetServerValue")
+local claimAutoOwnershipFn = comm:GetFunction("ClaimAutoOwnership") -- Fetch the new RemoteFunction
 
 local Player = Players.LocalPlayer
 
@@ -66,6 +67,7 @@ function NetworkPropertyClient.require(inst: Instance, name: string, initialValu
 
 	-- Initialize value quietly without triggering a prediction
 	self._Value:Set(initialValue)
+	self.Changed = self._Value.Changed
 
 	local ownerTrove = self._Trove:Extend()
 	self._NetworkOwnerName:Observe(function(networkOwnerName)
@@ -81,8 +83,6 @@ function NetworkPropertyClient.require(inst: Instance, name: string, initialValu
 			end
 		else
 			-- We deliberately do NOT wipe self._PredictedValue here anymore!
-			-- Natively replicating attributes can cause this block to fire right after a local prediction is made.
-
 			ownerTrove:Add(self._ServerValue:Observe(function(serverValue)
 				if self._Instance:GetAttribute(NetworkPropertyShared.GetServerReadyAttributeName(name)) then
 					-- If the server confirms our predicted value, gracefully accept it and unlock!
@@ -127,7 +127,9 @@ function NetworkPropertyClient.require(inst: Instance, name: string, initialValu
 			isDestroyed = true
 			cacheEntry.Refs -= 1
 			if cacheEntry.Refs <= 0 then
-				networkPropertyCache[inst][name] = nil
+				if networkPropertyCache[inst] then
+					networkPropertyCache[inst][name] = nil
+				end
 				self:_RealDestroy()
 			end
 		end
@@ -194,6 +196,16 @@ function NetworkPropertyClient:Set(value: any)
 		-- We don't have ownership yet, but we are setting a value. This is a local prediction!
 		self._PredictedValue = value
 		self._PredictionTime = os.clock()
+
+		-- Check if the property is set to auto-claim (SYNCED)
+		local isAutoMode = self._Instance:GetAttribute(NetworkPropertyShared.GetAutoModeAttributeName(self._Name))
+		if isAutoMode then
+			-- Ping the server to claim ownership
+			-- Wrapped in task.spawn to prevent yielding the client logic
+			task.spawn(function()
+				claimAutoOwnershipFn(self._Instance, self._Name, value)
+			end)
+		end
 	end
 end
 

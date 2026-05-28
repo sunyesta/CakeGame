@@ -32,7 +32,7 @@ function HistoryManager.AddUndoStep()
 
 	-- OPTIMIZATION: Instead of cloning heavy Instances, we serialize the current state
 	-- into lightweight data tables using your existing Save function!
-	local currentStateData = ModelEditorUtils.Save(Props.Config.BuildPlatform, Props.Instances.ModelsFolder)
+	local currentStateData = ModelEditorUtils.Save()
 	HistoryManager._UndoSteps[HistoryManager._CurrentUndoStepIndex] = currentStateData
 
 	-- Cap the history length. If we exceed the max, remove the oldest step.
@@ -58,7 +58,7 @@ function HistoryManager.LoadCurrentUndoStep()
 	Props.SelectedModel:Set(nil)
 
 	-- Rebuild the models securely from our serialized snapshot
-	local rebuiltModels = ModelEditorUtils.Load(Props.Config.BuildPlatform, Props.Instances.ModelsFolder, stepData)
+	local rebuiltModels = ModelEditorUtils.Load(stepData)
 
 	-- Add the newly built models back into our active Trove tracking
 	for _, model in rebuiltModels do

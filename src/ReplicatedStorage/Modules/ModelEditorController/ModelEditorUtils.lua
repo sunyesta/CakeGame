@@ -24,15 +24,13 @@ local Player = Players.LocalPlayer
 local ModelEditorUtils = setmetatable({}, { __index = ModelEditorServerSafeUtils })
 
 -- Override Load to inject LayeredTexture (Client Only)
-function ModelEditorUtils.Load(buildPlatform, parent, data)
-	return ModelEditorServerSafeUtils.Load(buildPlatform, parent, data)
+function ModelEditorUtils.Load(data)
+	return ModelEditorServerSafeUtils.Load(Props.Config.BuildPlatform, Props.Instances.ModelsFolder, data)
 end
 
 -- Override Save to inject LayeredTexture (Client Only)
-function ModelEditorUtils.Save(buildPlatform, folder)
-	return ModelEditorServerSafeUtils.Save(buildPlatform, folder, function(model)
-		return LayeredTexture.SaveGroup(model, true)
-	end)
+function ModelEditorUtils.Save()
+	return ModelEditorServerSafeUtils.Save(Props.Config.BuildPlatform, Props.Instances.ModelsFolder)
 end
 
 -- Symmetrical breaking relies on Props, so it stays here
@@ -55,7 +53,25 @@ function ModelEditorUtils.CanPlace(player, canPlaceFunc, model, cframe, placeOn)
 end
 
 function ModelEditorUtils.GetMountedModels(model)
-	local attachedParts = WeldUtils.GetMountedParts(model.PrimaryPart)
+	local function getMountedParts(part)
+		local bottomJoints = TableUtil.Filter(part:GetJoints(), function(joint)
+			return joint.Part1 == part
+		end)
+
+		for _, joint in pairs(bottomJoints) do
+			joint.Enabled = false
+		end
+
+		local mountedParts = WeldUtils.GetAttachedParts(part)
+
+		for _, joint in pairs(bottomJoints) do
+			joint.Enabled = true
+		end
+
+		return mountedParts
+	end
+
+	local attachedParts = getMountedParts(model.PrimaryPart)
 	local attachedModels = {}
 
 	for _, part in attachedParts do

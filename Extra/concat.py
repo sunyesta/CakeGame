@@ -159,8 +159,8 @@ if __name__ == "__main__":
         # r"C:\Users\Mary\Documents\roblox game dev\CakeGame\NonWallyPackages\DragMe",
         # r"C:\Users\Mary\Documents\roblox game dev\CakeGame\NonWallyPackages\ClickDetector.lua",
         # r"C:\Users\Mary\Documents\roblox game dev\CakeGame\NonWallyPackages\MouseTouch.lua",
-        r"C:\Users\Mary\Documents\roblox game dev\CakeGame\NonWallyPackages\NetworkProperty",
-        # r"C:\Users\Mary\Documents\roblox game dev\CakeGame\NonWallyPackages\PhysicsDrag",
+        # r"C:\Users\Mary\Documents\roblox game dev\CakeGame\NonWallyPackages\NetworkProperty",
+        r"C:\Users\Mary\Documents\roblox game dev\CakeGame\NonWallyPackages\PhysicsDrag",
         # r"C:\Users\Mary\Documents\roblox game dev\CakeGame\NonWallyPackages\Property.lua",
     ]
 

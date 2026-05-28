@@ -44,11 +44,24 @@ PlayerContext.Client.Comm:BindFunction("PlaceCake", function(player: Player, cak
 end)
 
 PlayerContext.Client.Comm:BindFunction("CreateCakeModel", function(player: Player, cakeData, cframe)
-	local cakeModel = CakeUtils.CreateCakeModel(cakeData)
-	if cakeModel then
-		cakeModel.Parent = workspace
-		cakeModel:PivotTo(cframe)
-	end
+	CakeUtils.CreateCake(cakeData, cframe)
 end)
+
+PlayerContext.Client.Comm:BindFunction(
+	"DestroyConnectedDraggables",
+	function(player: Player, draggablesToDestroy: table)
+		-- Ensure the client actually sent a table
+		if type(draggablesToDestroy) ~= "table" then
+			return
+		end
+
+		for _, instance in draggablesToDestroy do
+			-- Security check: Ensure it's an Instance and actually tagged as Draggable
+			if typeof(instance) == "Instance" and instance:HasTag("Draggable") then
+				instance:Destroy()
+			end
+		end
+	end
+)
 
 return CakeService

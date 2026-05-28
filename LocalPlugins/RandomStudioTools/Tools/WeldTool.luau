@@ -181,7 +181,7 @@ function WeldTool.Create(): CanvasGroup
 							joint = Instance.new("Weld")
 						end
 
-						joint.Name = constraintType .. "_" .. part1.Name
+						joint.Name = constraintType .. "_" .. part0.Name
 
 						local jointWorldCFrame = part1:GetPivot()
 
@@ -191,11 +191,7 @@ function WeldTool.Create(): CanvasGroup
 						joint.Part0 = part0
 						joint.Part1 = part1
 
-						if constraintType == "Motor6D" then
-							joint.Parent = part1
-						else
-							joint.Parent = part0
-						end
+						joint.Parent = part1
 
 						successCount += 1
 					end

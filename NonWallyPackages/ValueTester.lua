@@ -1,7 +1,7 @@
 --!strict
 --[[
     ValueTester.lua
-    A module for visualizing and modifying numeric variables in real-time.
+    A module for visualizing and modifying numeric variables and enums in real-time.
     Supports automatic Server-to-Client networking for shared variables.
 --]]
 
@@ -23,8 +23,7 @@ local COMM_NAMESPACE = "ValueTesterComm"
 
 export type ValueTester = {
 	Name: string,
-	Min: number,
-	Max: number,
+	Type: string,
 	Value: any, -- Property Object
 	Changed: any, -- Signal Object
 	Destroy: (self: ValueTester) -> (),
@@ -57,12 +56,17 @@ if isServer then
 	comm:BindFunction("GetTesters", function(player)
 		local pack = {}
 		for name, data in pairs(activeServerTesters) do
-			pack[name] = { default = data.prop:Get(), min = data.min, max = data.max }
+			pack[name] = {
+				type = data.type,
+				default = data.prop:Get(),
+				min = data.min,
+				max = data.max,
+			}
 		end
 		return pack
 	end)
 
-	-- Listen for client-driven slider updates
+	-- Listen for client-driven UI updates
 	updateSignal:Connect(function(player, name, val)
 		if activeServerTesters[name] then
 			activeServerTesters[name].prop:Set(val)
@@ -94,7 +98,7 @@ end
 local isGuiInitialized = false
 local sliderContainer: ScrollingFrame? = nil
 
---// Helper: UI Generation (Client Only)
+--// Helper: Numeric Slider UI Generation (Client Only)
 local function CreateSliderUI(
 	name: string,
 	default: number,
@@ -103,10 +107,6 @@ local function CreateSliderUI(
 	isServerVar: boolean,
 	targetProp: any
 )
-	if not isServer and not isGuiInitialized then
-		ValueTester._initClientGui()
-	end
-
 	if not sliderContainer then
 		return
 	end
@@ -185,7 +185,6 @@ local function CreateSliderUI(
 		if targetProp:Get() ~= val then
 			targetProp:Set(val)
 			if isServerVar then
-				-- Replicate change back to the server
 				updateSignal:Fire(name, val)
 			end
 		end
@@ -198,6 +197,114 @@ local function CreateSliderUI(
 			end
 		end)
 	end
+
+	frame.Parent = sliderContainer
+end
+
+--// Helper: EasingStyle Dropdown UI Generation (Client Only)
+local function CreateDropdownUI(name: string, default: Enum.EasingStyle, isServerVar: boolean, targetProp: any)
+	if not sliderContainer then
+		return
+	end
+
+	local CLOSED_HEIGHT = 45
+	local OPEN_HEIGHT = 160
+
+	-- Entry Container
+	local frame = Instance.new("Frame")
+	frame.Name = name
+	frame.Size = UDim2.new(1, 0, 0, CLOSED_HEIGHT)
+	frame.BackgroundColor3 = Color3.fromRGB(40, 40, 45)
+	frame.ClipsDescendants = true -- Important for dropdown expansion
+
+	local uiCorner = Instance.new("UICorner")
+	uiCorner.CornerRadius = UDim.new(0, 6)
+	uiCorner.Parent = frame
+
+	-- Label (Name + Scope)
+	local label = Instance.new("TextLabel")
+	label.Size = UDim2.new(1, -100, 0, CLOSED_HEIGHT)
+	label.Position = UDim2.new(0, 10, 0, 0)
+	label.BackgroundTransparency = 1
+	label.Text = string.format("%s %s", isServerVar and "[Server]" or "[Client]", name)
+	label.TextColor3 = isServerVar and Color3.fromRGB(100, 200, 255) or Color3.fromRGB(150, 255, 150)
+	label.Font = Enum.Font.GothamBold
+	label.TextSize = 14
+	label.TextXAlignment = Enum.TextXAlignment.Left
+	label.Parent = frame
+
+	-- Dropdown Toggle Button
+	local toggleBtn = Instance.new("TextButton")
+	toggleBtn.Size = UDim2.new(0, 90, 0, 25)
+	toggleBtn.Position = UDim2.new(1, -100, 0, 10)
+	toggleBtn.BackgroundColor3 = Color3.fromRGB(60, 60, 65)
+	toggleBtn.Text = default.Name
+	toggleBtn.TextColor3 = Color3.new(1, 1, 1)
+	toggleBtn.Font = Enum.Font.GothamMedium
+	toggleBtn.TextSize = 12
+	toggleBtn.AutoButtonColor = true
+
+	local btnCorner = Instance.new("UICorner")
+	btnCorner.CornerRadius = UDim.new(0, 4)
+	btnCorner.Parent = toggleBtn
+	toggleBtn.Parent = frame
+
+	-- Scrolling options
+	local scroll = Instance.new("ScrollingFrame")
+	scroll.Size = UDim2.new(1, -20, 1, -CLOSED_HEIGHT - 5)
+	scroll.Position = UDim2.new(0, 10, 0, CLOSED_HEIGHT)
+	scroll.BackgroundTransparency = 1
+	scroll.ScrollBarThickness = 4
+	scroll.CanvasSize = UDim2.new(0, 0, 0, 0)
+	scroll.Parent = frame
+
+	local listLayout = Instance.new("UIListLayout")
+	listLayout.SortOrder = Enum.SortOrder.Name
+	listLayout.Padding = UDim.new(0, 2)
+	listLayout.Parent = scroll
+
+	-- Populate Dropdown items
+	for _, style in ipairs(Enum.EasingStyle:GetEnumItems()) do
+		local optBtn = Instance.new("TextButton")
+		optBtn.Name = style.Name
+		optBtn.Size = UDim2.new(1, 0, 0, 20)
+		optBtn.BackgroundColor3 = Color3.fromRGB(50, 50, 55)
+		optBtn.Text = style.Name
+		optBtn.TextColor3 = Color3.new(1, 1, 1)
+		optBtn.Font = Enum.Font.Gotham
+		optBtn.TextSize = 12
+		optBtn.Parent = scroll
+
+		optBtn.MouseButton1Click:Connect(function()
+			-- Collapse UI
+			frame.Size = UDim2.new(1, 0, 0, CLOSED_HEIGHT)
+
+			-- Set Value & replicate if changed
+			if targetProp:Get() ~= style then
+				targetProp:Set(style)
+				if isServerVar then
+					updateSignal:Fire(name, style)
+				end
+			end
+		end)
+	end
+
+	-- Adjust Canvas Size based on item count
+	listLayout:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(function()
+		scroll.CanvasSize = UDim2.new(0, 0, 0, listLayout.AbsoluteContentSize.Y)
+	end)
+
+	-- Toggle behavior
+	local isOpen = false
+	toggleBtn.MouseButton1Click:Connect(function()
+		isOpen = not isOpen
+		frame.Size = isOpen and UDim2.new(1, 0, 0, OPEN_HEIGHT) or UDim2.new(1, 0, 0, CLOSED_HEIGHT)
+	end)
+
+	-- Sync Logic: Update UI text when property changes externally
+	targetProp:Observe(function(val: Enum.EasingStyle)
+		toggleBtn.Text = val.Name
+	end)
 
 	frame.Parent = sliderContainer
 end
@@ -219,7 +326,7 @@ function ValueTester._initClientGui()
 
 	local container = Instance.new("ScrollingFrame")
 	container.Name = "Container"
-	container.Size = UDim2.new(0, 300, 0, 400)
+	container.Size = UDim2.new(0, 320, 0, 450)
 	container.Position = UDim2.new(0, 20, 0, 20)
 	container.BackgroundColor3 = Color3.fromRGB(25, 25, 30)
 	container.BackgroundTransparency = 0.1
@@ -242,6 +349,11 @@ function ValueTester._initClientGui()
 	layout.Padding = UDim.new(0, 10)
 	layout.Parent = container
 
+	-- Auto-adjust CanvasSize
+	layout:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(function()
+		container.CanvasSize = UDim2.new(0, 0, 0, layout.AbsoluteContentSize.Y + 20)
+	end)
+
 	container.Parent = sg
 	sg.Parent = playerGui
 	sliderContainer = container
@@ -252,17 +364,27 @@ function ValueTester._initClientGui()
 			if not activeServerTesters[name] then
 				local proxyProp = Property.new(data.default)
 				activeServerTesters[name] = { prop = proxyProp }
-				CreateSliderUI(name, data.default, data.min, data.max, true, proxyProp)
+
+				if data.type == "Number" then
+					CreateSliderUI(name, data.default, data.min, data.max, true, proxyProp)
+				elseif data.type == "EasingStyle" then
+					CreateDropdownUI(name, data.default, true, proxyProp)
+				end
 			end
 		end
 	end)
 
 	-- Listen for dynamically created Server variables
-	announceSignal:Connect(function(name, def, min, max)
+	announceSignal:Connect(function(name: string, varType: string, def: any, min: number?, max: number?)
 		if not activeServerTesters[name] then
 			local proxyProp = Property.new(def)
 			activeServerTesters[name] = { prop = proxyProp }
-			CreateSliderUI(name, def, min, max, true, proxyProp)
+
+			if varType == "Number" then
+				CreateSliderUI(name, def, min or 0, max or 100, true, proxyProp)
+			elseif varType == "EasingStyle" then
+				CreateDropdownUI(name, def, true, proxyProp)
+			end
 		end
 	end)
 
@@ -274,34 +396,64 @@ function ValueTester._initClientGui()
 	end)
 end
 
---// Public API
+--// Public API: Numbers
 function ValueTester.new(name: string, default: number, min: number, max: number): any
+	if not isServer and not isGuiInitialized then
+		ValueTester._initClientGui()
+	end
+
 	local self = setmetatable({}, ValueTester)
 	self._trove = Trove.new()
 	self.Name = name
-	self.Min = min
-	self.Max = max
+	self.Type = "Number"
 
 	local prop = Property.new(default)
 	self.Value = prop
 	self.Changed = prop.Changed
 
 	if isServer then
-		activeServerTesters[name] = { prop = prop, min = min, max = max }
+		activeServerTesters[name] = { prop = prop, type = "Number", min = min, max = max }
 
-		-- Broadcast changes to all clients
 		self._trove:Add(prop:Observe(function(val)
 			valueChangedSignal:FireAll(name, val)
 		end))
 
-		-- Announce to current clients
-		announceSignal:FireAll(name, default, min, max)
+		announceSignal:FireAll(name, "Number", default, min, max)
 	else
-		-- Create a local UI element
 		CreateSliderUI(name, default, min, max, false, prop)
 	end
 
-	return prop
+	return self -- Return the object instead of just the property!
+end
+
+--// Public API: EasingStyles
+function ValueTester.newEasingStyle(name: string, default: Enum.EasingStyle): any
+	if not isServer and not isGuiInitialized then
+		ValueTester._initClientGui()
+	end
+
+	local self = setmetatable({}, ValueTester)
+	self._trove = Trove.new()
+	self.Name = name
+	self.Type = "EasingStyle"
+
+	local prop = Property.new(default)
+	self.Value = prop
+	self.Changed = prop.Changed
+
+	if isServer then
+		activeServerTesters[name] = { prop = prop, type = "EasingStyle" }
+
+		self._trove:Add(prop:Observe(function(val)
+			valueChangedSignal:FireAll(name, val)
+		end))
+
+		announceSignal:FireAll(name, "EasingStyle", default)
+	else
+		CreateDropdownUI(name, default, false, prop)
+	end
+
+	return self -- Return the object
 end
 
 function ValueTester:Destroy()

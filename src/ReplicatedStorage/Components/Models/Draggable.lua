@@ -23,7 +23,16 @@ local MultiTouch = require(ReplicatedStorage.NonWallyPackages.MultiTouch)
 local LockGui = require(ReplicatedStorage.Common.Modules.Instances.LockGui)
 local Property = require(ReplicatedStorage.NonWallyPackages.Property)
 local NetworkProperty = require(ReplicatedStorage.NonWallyPackages.NetworkProperty)
+local InstanceUtils = require(ReplicatedStorage.NonWallyPackages.InstanceUtils)
+local TableUtil = require(ReplicatedStorage.Packages.TableUtil)
+local ModelEditorServerSafeUtils =
+	require(ReplicatedStorage.Common.Modules.ModelEditorController.ModelEditorServerSafeUtils)
+local ModelEditorController = require(ReplicatedStorage.Common.Modules.ModelEditorController)
+local CakeDecoratorGui = require(ReplicatedStorage.Common.Components.GUIs.CakeDecoratorGui)
+local TableUtil2 = require(ReplicatedStorage.NonWallyPackages.TableUtil2)
+local PlayerContext = require(ReplicatedStorage.Common.Controllers.PlayerContext)
 
+local mouseTouch = MouseTouch.new()
 local Keyboard = Input.Keyboard.new()
 
 local MaxDragDistance = 20
@@ -34,6 +43,25 @@ local DraggableClient = Component.new({
 	Tag = "Draggable",
 	Ancestors = { Workspace },
 })
+DraggableClient.CanDrag = Property.new(true)
+
+ModelEditorController.Active:Observe(function(active)
+	if active then
+		DraggableClient.CanDrag:Set(false)
+	else
+		DraggableClient.CanDrag:Set(true)
+	end
+end)
+
+-- Helper method to handle both Models and BaseParts seamlessly
+function DraggableClient:_GetRootPart(): BasePart?
+	if self.Instance:IsA("Model") then
+		return self.Instance.PrimaryPart
+	elseif self.Instance:IsA("BasePart") then
+		return self.Instance
+	end
+	return nil
+end
 
 function DraggableClient:Construct()
 	self._Trove = Trove.new()
@@ -42,7 +70,7 @@ function DraggableClient:Construct()
 	self.DragEnd = Signal.new()
 
 	self._LockGui = self._Trove:Add(LockGui.new())
-	self._IsHeld = NetworkProperty.require(self.Instance.PrimaryPart, "IsHeld")
+	self._IsHeld = NetworkProperty.require(self:_GetRootPart(), "IsHeld")
 
 	self.PickupSound = SoundEffects.Pickup.Simple1
 	self.PutDownSound = SoundEffects.PutDown.Simple1
@@ -50,13 +78,22 @@ end
 
 -- STREAMING_CHUNK:Setting up component start and stop methods...
 function DraggableClient:Start()
-	local observablePrimaryPart = self._Trove:Add(ObservableInstance.fromPrimaryPart(self.Instance))
+	if self.Instance:IsA("Model") then
+		-- For models, wait until the PrimaryPart exists
+		local observablePrimaryPart = self._Trove:Add(ObservableInstance.fromPrimaryPart(self.Instance))
 
-	self._Trove:Add(observablePrimaryPart:Observe(function(RootPart, loadedTrove)
-		if RootPart then
-			self:Loaded(RootPart, loadedTrove)
-		end
-	end))
+		self._Trove:Add(observablePrimaryPart:Observe(function(RootPart, loadedTrove)
+			if RootPart then
+				self:Loaded(RootPart, loadedTrove)
+			end
+		end))
+	elseif self.Instance:IsA("BasePart") then
+		-- For BaseParts, they are essentially their own PrimaryPart, so load immediately!
+		local loadedTrove = self._Trove:Extend()
+		self:Loaded(self.Instance, loadedTrove)
+	else
+		warn("DraggableClient was added to an unsupported instance type:", self.Instance.ClassName)
+	end
 end
 
 function DraggableClient:Stop()
@@ -68,14 +105,11 @@ function DraggableClient:Loaded(RootPart, trove)
 	local isCurrentlyHeld = false
 
 	self._IsHeld:Observe(function(isHeld)
-		print("is held =", isHeld)
 		isCurrentlyHeld = isHeld
 		if isHeld then
-			print(true)
-			SoundUtils.PlaySoundOnce(self.PickupSound, self.Instance.PrimaryPart)
+			SoundUtils.PlaySoundOnce(self.PickupSound, RootPart)
 		else
-			print(false)
-			SoundUtils.PlaySoundOnce(self.PutDownSound, self.Instance.PrimaryPart)
+			SoundUtils.PlaySoundOnce(self.PutDownSound, RootPart)
 		end
 	end)
 
@@ -107,14 +141,14 @@ function DraggableClient:Loaded(RootPart, trove)
 	local DRAG_THRESHOLD = 5
 
 	local cakeClickDetector = trove:Add(ClickDetector.new())
-	local mouseTouch = trove:Add(MouseTouch.new())
+	local mouseTouchLocal = trove:Add(MouseTouch.new()) -- Renamed to prevent shadowing the upvalue
 
 	cakeClickDetector:SetResultFilterFunction(function(result)
-		return self.Instance:IsAncestorOf(result.Instance)
+		return self.Instance:IsAncestorOf(result.Instance) or result.Instance == self.Instance
 	end)
 
 	trove:Add(cakeClickDetector.LeftDown:Connect(function(part, raycastResult)
-		local startPos = mouseTouch:GetPosition()
+		local startPos = mouseTouchLocal:GetPosition()
 		local movedConnection
 		local upConnection
 
@@ -127,22 +161,24 @@ function DraggableClient:Loaded(RootPart, trove)
 			end
 		end
 
-		movedConnection = mouseTouch.Moved:Connect(function(newPos)
-			local distance = (newPos - startPos).Magnitude
+		if self.CanDrag:Get() then
+			movedConnection = mouseTouchLocal.Moved:Connect(function(newPos)
+				local distance = (newPos - startPos).Magnitude
 
-			if distance >= DRAG_THRESHOLD then
-				cleanupInput()
-				local dragTrove = self:OnDragStart()
-				if dragTrove then
-					trove:Add(dragTrove)
-					dragTrove:Add(function()
-						trove:Remove(dragTrove)
-					end)
+				if distance >= DRAG_THRESHOLD then
+					cleanupInput()
+					local dragTrove = self:OnDragStart()
+					if dragTrove then
+						trove:Add(dragTrove)
+						dragTrove:Add(function()
+							trove:Remove(dragTrove)
+						end)
+					end
 				end
-			end
-		end)
+			end)
+		end
 
-		upConnection = mouseTouch.LeftUp:Connect(function(releasePos)
+		upConnection = mouseTouchLocal.LeftUp:Connect(function(releasePos)
 			cleanupInput()
 			self.LeftClick:Fire(part)
 		end)
@@ -151,29 +187,76 @@ end
 
 -- STREAMING_CHUNK:Configuring drag start and setting up state variables...
 function DraggableClient:OnDragStart()
+	return self:_MainDrag()
+end
+
+-- STREAMING_CHUNK:Calculating the bounding ellipse bottom center...
+function DraggableClient:_GetBottomCenterPositionOfBoundingEllipse(): Vector3
+	local rootPart = self:_GetRootPart()
+	if not rootPart then
+		return self.Instance:GetPivot().Position
+	end
+
+	local parts = rootPart:GetConnectedParts()
+	local minX, minY, minZ = math.huge, math.huge, math.huge
+	local maxX, maxY, maxZ = -math.huge, -math.huge, -math.huge
+	local hasParts = false
+
+	for _, descendant in parts do
+		if descendant:IsA("BasePart") then
+			hasParts = true
+
+			local cf = descendant.CFrame
+			local size = descendant.Size
+			local hX, hY, hZ = size.X * 0.5, size.Y * 0.5, size.Z * 0.5
+
+			local rv = cf.RightVector
+			local uv = cf.UpVector
+			local lv = cf.LookVector
+
+			local extX = math.sqrt((rv.X * hX) ^ 2 + (uv.X * hY) ^ 2 + (lv.X * hZ) ^ 2)
+			local extY = math.sqrt((rv.Y * hX) ^ 2 + (uv.Y * hY) ^ 2 + (lv.Y * hZ) ^ 2)
+			local extZ = math.sqrt((rv.Z * hX) ^ 2 + (uv.Z * hY) ^ 2 + (lv.Z * hZ) ^ 2)
+
+			local pos = cf.Position
+			local pX, pY, pZ = pos.X, pos.Y, pos.Z
+
+			minX = math.min(minX, pX - extX)
+			minY = math.min(minY, pY - extY)
+			minZ = math.min(minZ, pZ - extZ)
+
+			maxX = math.max(maxX, pX + extX)
+			maxY = math.max(maxY, pY + extY)
+			maxZ = math.max(maxZ, pZ + extZ)
+		end
+	end
+
+	if not hasParts then
+		return self.Instance:GetPivot().Position
+	end
+
+	return Vector3.new((minX + maxX) * 0.5, minY, (minZ + maxZ) * 0.5)
+end
+
+-- Keep this method as is
+function DraggableClient:_MainDrag()
 	local characterSizeOffset = Player.Character:GetExtentsSize().Y / 2
 
 	local dragTrove = Trove.new()
-	local mouseTouch = dragTrove:Add(MouseTouch.new())
 
-	local cakePrimaryPart = self.Instance.PrimaryPart
+	local cakePrimaryPart = self:_GetRootPart()
 	if not cakePrimaryPart then
 		return dragTrove
 	end
 
 	local cakeDrag = dragTrove:Add(PhysicsDrag.new(cakePrimaryPart))
 
-	-- Get initial grab position for our screen offset calculation
-	local initialGrabPos = self:_GetBottomCenterPositionOfBoundingEllipse()
-
-	-- Rotation Variables
-	local originalPivot = cakePrimaryPart:GetPivot()
-	local accumulatedRotation = originalPivot.Rotation
-
-	if CollectionService:HasTag(self.Instance, "DragUpright") then
-		local _pitch, yaw, _roll = accumulatedRotation:ToEulerAnglesYXZ()
-		accumulatedRotation = CFrame.Angles(0, yaw, 0)
-	end
+	-- 1. Pre-declare our math variables so they can be accessed inside our callbacks
+	local initialGrabPos: Vector3
+	local originalPivot: CFrame
+	local accumulatedRotation: CFrame = CFrame.new()
+	local screenOffset: Vector2 = Vector2.zero
+	local initialMousePos = mouseTouch:GetPosition()
 
 	-- State variables for rotation
 	local isRotating = false
@@ -181,9 +264,9 @@ function DraggableClient:OnDragStart()
 	local lockedVirtualMousePos = nil
 
 	local lastTargetPos = cakePrimaryPart.Position
-	local rotationSensitivity = 0.015 -- Adjust this to make rotation faster/slower
+	local rotationSensitivity = 0.015
 
-	-- STREAMING_CHUNK:Connecting keyboard input for manual rotation...
+	-- Connecting keyboard input for manual rotation...
 	dragTrove:Add(Keyboard.KeyDown:Connect(function(keycode)
 		if keycode == Enum.KeyCode.R then
 			isRotating = true
@@ -198,18 +281,39 @@ function DraggableClient:OnDragStart()
 		end
 	end))
 
-	-- Calculate Screen-Space Offset
-	local camera = workspace.CurrentCamera
-	local pivotScreenPos3D = camera:WorldToViewportPoint(initialGrabPos)
-	local pivotScreenPos2D = Vector2.new(pivotScreenPos3D.X, pivotScreenPos3D.Y)
-
-	local initialMousePos = mouseTouch:GetPosition()
-	local screenOffset = pivotScreenPos2D - initialMousePos
-
 	local worldRayParams = RaycastParams.new()
 	worldRayParams.FilterType = Enum.RaycastFilterType.Exclude
 
-	-- STREAMING_CHUNK:Setting up the drag style and calculating positions...
+	local dragTarget = nil
+
+	-- 2. Wait until the PhysicsDrag module breaks the welds, THEN calculate offsets
+	cakeDrag:OnInit(function(dragTrove1)
+		-- Setup raycast filters AFTER unwelding so we don't accidentally filter the floor!
+		local connectedParts = cakePrimaryPart:GetConnectedParts(true)
+		worldRayParams.FilterDescendantsInstances = connectedParts
+		worldRayParams:AddToFilter(Player.Character)
+
+		-- Get initial grab position (Now that the bounding ellipse is just the object)
+		initialGrabPos = self:_GetBottomCenterPositionOfBoundingEllipse()
+
+		-- Rotation Variables
+		originalPivot = cakePrimaryPart:GetPivot()
+		accumulatedRotation = originalPivot.Rotation
+
+		if CollectionService:HasTag(self.Instance, "DragUpright") then
+			local _pitch, yaw, _roll = accumulatedRotation:ToEulerAnglesYXZ()
+			accumulatedRotation = CFrame.Angles(0, yaw, 0)
+		end
+
+		-- Calculate Screen-Space Offset
+		local camera = workspace.CurrentCamera
+		local pivotScreenPos3D = camera:WorldToViewportPoint(initialGrabPos)
+		local pivotScreenPos2D = Vector2.new(pivotScreenPos3D.X, pivotScreenPos3D.Y)
+
+		screenOffset = pivotScreenPos2D - initialMousePos
+	end)
+
+	-- Setting up the drag style and calculating positions...
 	cakeDrag:SetDragStyle(function()
 		-- 1. DETERMINE ROTATION STATE FIRST
 		local unprocessedCount = 0
@@ -249,19 +353,21 @@ function DraggableClient:OnDragStart()
 		local targetPos
 		if result then
 			targetPos = result.Position
+			dragTarget = result.Instance
 		else
 			targetPos = virtualRay.Origin + (virtualRay.Direction * rayDistance)
+			dragTarget = nil
 		end
 
 		local distance = (targetPos - Player.Character.HumanoidRootPart.Position).Magnitude
 		if distance > MaxDragDistance then
 			dragTrove:Clean()
+			dragTarget = nil
 		end
 
 		-- Update last target position
 		lastTargetPos = targetPos
 
-		-- STREAMING_CHUNK:Processing rotation logic and touch inputs...
 		-- 3. PROCESS ROTATION DELTAS
 		if currentlyRotating then
 			-- ENFORCEMENT: Keep mouse locked while rotating
@@ -290,13 +396,9 @@ function DraggableClient:OnDragStart()
 		return CFrame.new(targetPos) * accumulatedRotation
 	end)
 
-	-- STREAMING_CHUNK:Setting up physics style for dragging...
+	-- Setting up physics style for dragging...
 	cakeDrag:SetPhysicsStyle(
 		function(originPart: BasePart, grabPart: BasePart, grabPosition: Vector3, dragTrove1: typeof(Trove.new()))
-			local connectedParts = self.Instance.PrimaryPart:GetConnectedParts(true)
-			worldRayParams.FilterDescendantsInstances = connectedParts
-			worldRayParams:AddToFilter(Player.Character)
-
 			local originAttachment = dragTrove1:Add(Instance.new("Attachment"))
 			originAttachment.Parent = originPart
 			originAttachment.Visible = false
@@ -314,11 +416,11 @@ function DraggableClient:OnDragStart()
 				grabAttachment.WorldPosition = self:_GetBottomCenterPositionOfBoundingEllipse()
 			end))
 
-			AlignCFrame.new(grabPart, grabAttachment, originAttachment)
+			dragTrove1:Add(AlignCFrame.new(grabPart, grabAttachment, originAttachment))
 		end
 	)
 
-	-- STREAMING_CHUNK:Finishing drag setup and starting drag behavior...
+	-- Finishing drag setup and starting drag behavior...
 	if UserInputService.PreferredInput == Enum.PreferredInput.Touch then
 		Cameras.PlayerCamera.Props.FreezeCamera:Set(true)
 		dragTrove:Add(function()
@@ -334,12 +436,21 @@ function DraggableClient:OnDragStart()
 	cakeDrag:StartDrag():andThen(function(dragSuccess, message)
 		if dragSuccess then
 			dragTrove:Add(mouseTouch.LeftUp:Connect(function()
-				dragTrove:Clean()
+				cakeDrag:StopDrag()
+
+				if dragTarget and InstanceUtils.FindFirstAncestorWithTag(dragTarget, "Surface") then
+					cakeDrag:Weld(dragTarget)
+					dragTrove:Clean()
+
+					self:_HandleCakeBuildPlatform(dragTarget)
+				else
+					dragTrove:Clean()
+				end
 			end))
 		else
 			dragTrove:Clean()
-			SoundUtils.PlaySoundOnce(SoundEffects.Error, self.Instance.PrimaryPart)
-			self._LockGui:ShowOn(self.Instance.PrimaryPart)
+			SoundUtils.PlaySoundOnce(SoundEffects.Error, cakePrimaryPart)
+			self._LockGui:ShowOn(cakePrimaryPart)
 			warn(message)
 		end
 	end)
@@ -347,47 +458,121 @@ function DraggableClient:OnDragStart()
 	return dragTrove
 end
 
--- STREAMING_CHUNK:Calculating the bounding ellipse bottom center...
-function DraggableClient:_GetBottomCenterPositionOfBoundingEllipse(): Vector3
-	local parts = self.Instance.PrimaryPart:GetConnectedParts()
-	local minX, minY, minZ = math.huge, math.huge, math.huge
-	local maxX, maxY, maxZ = -math.huge, -math.huge, -math.huge
-	local hasParts = false
+-- STREAMING_CHUNK:Configuring the alternate drag behavior...
+function DraggableClient:_AltDrag()
+	local dragTrove = self._Trove:Extend()
 
-	for _, descendant in parts do
-		if descendant:IsA("BasePart") then
-			hasParts = true
+	local primaryPart = self:_GetRootPart()
+	if not primaryPart then
+		return dragTrove
+	end
 
-			local cf = descendant.CFrame
-			local size = descendant.Size
-			local hX, hY, hZ = size.X * 0.5, size.Y * 0.5, size.Z * 0.5
+	local drag = dragTrove:Add(PhysicsDrag.new(primaryPart))
 
-			local rv = cf.RightVector
-			local uv = cf.UpVector
-			local lv = cf.LookVector
+	drag:SetPhysicsStyle(
+		function(originPart: BasePart, grabPart: BasePart, grabPosition: Vector3, dragTrove1: typeof(Trove.new()))
+			-- Setup origin attachment
+			local originAttachment = dragTrove1:Add(Instance.new("Attachment"))
+			originAttachment.Visible = true
+			originAttachment.Parent = originPart
 
-			local extX = math.sqrt((rv.X * hX) ^ 2 + (uv.X * hY) ^ 2 + (lv.X * hZ) ^ 2)
-			local extY = math.sqrt((rv.Y * hX) ^ 2 + (uv.Y * hY) ^ 2 + (lv.Y * hZ) ^ 2)
-			local extZ = math.sqrt((rv.Z * hX) ^ 2 + (uv.Z * hY) ^ 2 + (lv.Z * hZ) ^ 2)
+			-- Setup the grab Attachment
+			local grabAttachment: Attachment = dragTrove1:Add(Instance.new("Attachment"))
+			grabAttachment.Visible = true
 
-			local pos = cf.Position
-			local pX, pY, pZ = pos.X, pos.Y, pos.Z
+			grabAttachment.Parent = grabPart
+			grabAttachment.WorldCFrame = grabPosition
 
-			minX = math.min(minX, pX - extX)
-			minY = math.min(minY, pY - extY)
-			minZ = math.min(minZ, pZ - extZ)
+			local alignPosition: AlignPosition = dragTrove1:Add(Instance.new("AlignPosition"))
+			alignPosition.Responsiveness = 200
+			alignPosition.MaxForce = math.huge
+			alignPosition.MaxVelocity = math.huge
+			alignPosition.Mode = Enum.PositionAlignmentMode.TwoAttachment
+			alignPosition.Attachment0 = grabAttachment
+			alignPosition.Attachment1 = originAttachment
+			alignPosition.Parent = grabPart
 
-			maxX = math.max(maxX, pX + extX)
-			maxY = math.max(maxY, pY + extY)
-			maxZ = math.max(maxZ, pZ + extZ)
+			local alignOrientation: AlignOrientation = dragTrove1:Add(Instance.new("AlignOrientation"))
+			alignOrientation.Responsiveness = 200
+			alignOrientation.MaxTorque = math.huge
+			alignOrientation.MaxAngularVelocity = math.huge
+			alignOrientation.Mode = Enum.OrientationAlignmentMode.TwoAttachment
+			alignOrientation.Attachment0 = grabAttachment
+			alignOrientation.Attachment1 = originAttachment
+			alignOrientation.Parent = grabPart
+		end
+	)
+
+	drag:SetDragStyle(function()
+		local rayDistance = (Player.Character.HumanoidRootPart.Position - Workspace.CurrentCamera.CFrame.Position).Magnitude
+
+		local mousePos = mouseTouch:GetPosition()
+		local ray = mouseTouch:GetRay(mousePos)
+
+		local pos = ray.Origin + (ray.Direction * rayDistance)
+
+		return CFrame.new(pos)
+	end)
+
+	drag:StartDrag():andThen(function(dragSuccess, message)
+		if dragSuccess then
+			dragTrove:Add(mouseTouch.LeftUp:Connect(function()
+				drag:StopDrag()
+				dragTrove:Clean()
+			end))
+		else
+			dragTrove:Clean()
+			SoundUtils.PlaySoundOnce(SoundEffects.Error, primaryPart)
+			self._LockGui:ShowOn(primaryPart)
+			warn(message)
+		end
+	end)
+
+	return dragTrove
+end
+
+function DraggableClient:GetConnectedDraggableModels()
+	local draggables = {}
+	-- Use your safe helper method instead of assuming self.Instance.PrimaryPart!
+	local rootPart = self:_GetRootPart()
+
+	if not rootPart then
+		return {}
+	end
+
+	for _, part in rootPart:GetConnectedParts(true) do
+		-- Check if the part itself is a standalone draggable
+		if part:HasTag("Draggable") then
+			draggables[part] = true
+		end
+
+		-- Check if it belongs to a draggable model
+		local model = part:FindFirstAncestorWhichIsA("Model")
+		if model and model:HasTag("Draggable") then
+			draggables[model] = true
 		end
 	end
 
-	if not hasParts then
-		return self.Instance:GetPivot().Position
-	end
+	return TableUtil.Keys(draggables)
+end
 
-	return Vector3.new((minX + maxX) * 0.5, minY, (minZ + maxZ) * 0.5)
+function DraggableClient:_HandleCakeBuildPlatform(dragTarget)
+	if dragTarget.Name == "CakeBuildPlatform" then
+		local connectedModels = self:GetConnectedDraggableModels()
+		local saveData = ModelEditorServerSafeUtils.SaveFromModels(dragTarget, connectedModels, "PhysicsDragWeld")
+
+		-- Pass the array of connected models to the server, rather than relying on the server to figure it out
+		PlayerContext.Comm
+			:DestroyConnectedDraggables(connectedModels)
+			:andThen(function()
+				CakeDecoratorGui.Open()
+				ModelEditorController.Load(saveData)
+			end)
+			:catch(function(err)
+				-- Added a catch block to log any unexpected errors
+				warn("Failed to destroy draggables on server:", err)
+			end)
+	end
 end
 
 return DraggableClient
