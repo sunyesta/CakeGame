@@ -124,6 +124,26 @@ function Trackball.new(config)
 	return self
 end
 
+-- ====================================================================
+-- NEW METHOD: SyncToCFrame
+-- Prevents camera jumping/shifting by inheriting the current view angle
+-- and resetting the pivot point when this camera becomes active.
+-- ====================================================================
+function Trackball:SyncToCFrame(targetCFrame: CFrame)
+	-- Extract the Pitch (X) and Yaw (Y) from the provided CFrame
+	local pitch, yaw, _ = targetCFrame:ToEulerAnglesYXZ()
+
+	self.Yaw = yaw
+	self.TargetYaw = yaw
+	self.Pitch = pitch
+	self.TargetPitch = pitch
+
+	-- Resetting the pivot ensures the camera snaps to the new target
+	-- instead of trying to smoothly pan from a stale location across the map.
+	self._currentPivot = nil
+end
+-- ====================================================================
+
 function Trackball:SetupInput()
 	-- Handle Zoom via Scroll Wheel
 	self._trove:Connect(UserInputService.InputChanged, function(input, processed)

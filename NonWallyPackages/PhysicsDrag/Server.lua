@@ -227,9 +227,12 @@ function PhysicsDragServer.CreateDragHandler(part: BasePart)
 
 			-- 2. Server Unweld: Break before we lock network ownership
 			for _, constraint in self.Instance:GetJoints() do
-				if constraint.Name == "PhysicsDragWeld" and constraint.Part1 == self.Instance then
-					print("server joint", constraint)
-					constraint:Destroy()
+				if constraint.Name == "PhysicsDragWeld" then
+					local otherPart = constraint.Part0 == self.Instance and constraint.Part1 or constraint.Part0
+					if otherPart and Shared.IsPartOnTop(self.Instance, otherPart) then
+						print("server joint unwelded", constraint)
+						constraint:Destroy()
+					end
 				end
 			end
 
@@ -325,8 +328,11 @@ function PhysicsDragServer.CreateDragHandler(part: BasePart)
 
 		for _, constraint in self.Instance:GetJoints() do
 			print("server joint", constraint)
-			if constraint.Name == "PhysicsDragWeld" and constraint.Part1 == self.Instance then
-				constraint:Destroy()
+			if constraint.Name == "PhysicsDragWeld" then
+				local otherPart = constraint.Part0 == self.Instance and constraint.Part1 or constraint.Part0
+				if otherPart and Shared.IsPartOnTop(self.Instance, otherPart) then
+					constraint:Destroy()
+				end
 			end
 		end
 

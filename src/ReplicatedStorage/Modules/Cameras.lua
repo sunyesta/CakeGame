@@ -2,6 +2,7 @@ local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local SoundService = game:GetService("SoundService")
 local RunService = game:GetService("RunService")
+local Workspace = game:GetService("Workspace")
 
 local Cinemachine = require(ReplicatedStorage.NonWallyPackages.Cinemachine)
 local PlayerUtils = require(ReplicatedStorage.NonWallyPackages.PlayerUtils)
@@ -24,14 +25,12 @@ local MAX_PAN_SPEED = math.rad(90)
 function GetBoundingBox(root: Instance): (CFrame, Vector3)
 	-- If it's a Model, use the built-in optimized engine method
 	if root:IsA("Model") then
-		-- Returns: CFrame orientation, Vector3 size
 		return root:GetBoundingBox()
 	end
 
 	-- Manual Calculation for Folders or non-Model groups
 	local minX, minY, minZ = math.huge, math.huge, math.huge
 	local maxX, maxY, maxZ = -math.huge, -math.huge, -math.huge
-
 	local foundPart = false
 
 	for _, descendant in root:GetDescendants() do
@@ -92,14 +91,32 @@ function PlayerCamera()
 		RotatePlayerWithShiftlock = false,
 	})
 
+	-- FIX: Force controls off immediately so it doesn't process inputs before becoming active
+	playerCamera.Body.RotationControlEnabled = false
+	playerCamera.Body.ZoomControlEnabled = false
+
 	Cinemachine.Brain:Register(playerCamera)
 
-	playerCamera:Observe(function(activeTrove)
-		activeTrove:Add(PlayerUtils.ObserveCharacterAdded(Player, function(character)
-			-- Track HumanoidRootPart for 2D to avoid jitter from animation (Head bobbing)
-			local rootPart = character:WaitForChild("HumanoidRootPart")
+	-- FIX: Variable to store the last known zoom distance
+	local savedZoomDistance = 15
 
+	-- This Observe block runs whenever this VirtualCamera becomes the LIVE (highest priority) camera
+	playerCamera:Observe(function(activeTrove)
+		-- SYNC ADDED HERE:
+		-- Right as the PlayerCamera becomes active, force its starting Yaw/Pitch
+		if Workspace.CurrentCamera then
+			playerCamera.Body:SyncToCFrame(Workspace.CurrentCamera.CFrame)
+		end
+
+		-- FIX: Restore the zoom to exactly what it was before we left this camera
+		playerCamera.Body.TargetDistance = savedZoomDistance
+		playerCamera.Body.Distance = savedZoomDistance
+		playerCamera.Body.ActualDistance = savedZoomDistance
+
+		activeTrove:Add(PlayerUtils.ObserveCharacterAdded(Player, function(character)
+			local rootPart = character:WaitForChild("HumanoidRootPart")
 			character:WaitForChild("Humanoid")
+
 			playerCamera.Follow = character.Humanoid
 			playerCamera.LookAt = character.Humanoid
 
@@ -111,7 +128,6 @@ function PlayerCamera()
 
 		local function UpdateCameraFreeze()
 			local freezeProps = playerCamera.Props.FreezeCamera:Get()
-
 			if freezeProps then
 				playerCamera.Body.RotationControlEnabled = false
 				playerCamera.Body.ZoomControlEnabled = false
@@ -121,7 +137,16 @@ function PlayerCamera()
 			end
 		end
 
+		-- FIX: Call immediately to enable controls when active, then listen for changes
+		UpdateCameraFreeze()
 		activeTrove:Add(playerCamera.Props.FreezeCamera:Observe(UpdateCameraFreeze))
+
+		-- FIX: When this camera loses focus, save the zoom and disable background inputs
+		activeTrove:Add(function()
+			savedZoomDistance = playerCamera.Body.TargetDistance
+			playerCamera.Body.RotationControlEnabled = false
+			playerCamera.Body.ZoomControlEnabled = false
+		end)
 	end)
 
 	playerCamera.Body.RotatePlayerWithShiftlock = true
@@ -148,17 +173,39 @@ function CakeCamera()
 		Sensitivity = Vector2.new(0.005, 0.005),
 	})
 
+	-- FIX: Force controls off immediately
+	cakeCamera.Body.RotationControlEnabled = false
+	cakeCamera.Body.ZoomControlEnabled = false
+
 	Cinemachine.Brain:Register(cakeCamera)
 
 	local CakeBuildPlatform = workspace:WaitForChild("CakeDecoratorArea"):WaitForChild("CakeBuildPlatform")
 	local ModelEditorModels = workspace:WaitForChild("ModelEditorModels")
 
-	cakeCamera:Observe(function(activeTrove)
-		Controls:Disable()
+	-- FIX: Store zoom distance for the cake camera as well
+	local savedCakeZoom = 6
 
-		activeTrove:Add(function()
-			Controls:Enable()
-		end)
+	-- This Observe block runs whenever this VirtualCamera becomes the LIVE (highest priority) camera
+	cakeCamera:Observe(function(activeTrove)
+		-- SET INITIAL ANGLE:
+		-- Position the camera on the LookVector side, elevated 45 degrees, looking at the center
+		local platformPos = CakeBuildPlatform.Position
+		local platformFront = CakeBuildPlatform:GetPivot().LookVector
+
+		-- Equal offsets forward and upward create a 45-degree angle.
+		-- (The 10 studs is just for the angle math; the Trackball still handles the actual zoom distance!)
+		local startCamPos = platformPos + (platformFront * 10) + Vector3.new(0, 10, 0)
+
+		local startCFrame = CFrame.lookAt(startCamPos, platformPos)
+
+		cakeCamera.Body:SyncToCFrame(startCFrame)
+
+		-- FIX: Restore cake camera zoom
+		cakeCamera.Body.TargetDistance = savedCakeZoom
+		cakeCamera.Body.Distance = savedCakeZoom
+		cakeCamera.Body.ActualDistance = savedCakeZoom
+
+		Controls:Disable()
 
 		local function OnWorkspaceChanged()
 			local boundingBox = GetBoundingBox(ModelEditorModels)
@@ -170,7 +217,7 @@ function CakeCamera()
 		OnWorkspaceChanged()
 		activeTrove:Add(ModelEditorController.WorkspaceChanged:Connect(OnWorkspaceChanged))
 
-		activeTrove:Add(ModelEditorController.FreezeCamera:Observe(function(freezeCamera)
+		local function UpdateFreezeCamera(freezeCamera)
 			if freezeCamera then
 				cakeCamera.Body.RotationControlEnabled = false
 				cakeCamera.Body.ZoomControlEnabled = false
@@ -178,7 +225,19 @@ function CakeCamera()
 				cakeCamera.Body.RotationControlEnabled = true
 				cakeCamera.Body.ZoomControlEnabled = true
 			end
-		end))
+		end
+
+		-- FIX: Ensure we start with controls enabled based on the current freeze state
+		UpdateFreezeCamera(ModelEditorController.FreezeCamera:Get())
+		activeTrove:Add(ModelEditorController.FreezeCamera:Observe(UpdateFreezeCamera))
+
+		-- FIX: Clean up when leaving CakeCamera
+		activeTrove:Add(function()
+			Controls:Enable()
+			savedCakeZoom = cakeCamera.Body.TargetDistance
+			cakeCamera.Body.RotationControlEnabled = false
+			cakeCamera.Body.ZoomControlEnabled = false
+		end)
 	end)
 
 	return cakeCamera

@@ -36,12 +36,12 @@ function CakeDecoratorArea:Stop()
 end
 
 function CakeDecoratorArea:Loaded(loadedTrove)
-	local editCakeProximityPrompt: ProximityPrompt =
-		loadedTrove:Add(CreateProximityPrompt(self.Instance.CakeBuildPlatform, "Edit"))
+	-- local editCakeProximityPrompt: ProximityPrompt =
+	-- 	loadedTrove:Add(CreateProximityPrompt(self.Instance.CakeBuildPlatform, "Edit"))
 
-	editCakeProximityPrompt.Triggered:Connect(function(playerWhoTriggered)
-		CakeDecoratorGui.Open()
-	end)
+	-- editCakeProximityPrompt.Triggered:Connect(function(playerWhoTriggered)
+	-- 	CakeDecoratorGui.Open()
+	-- end)
 end
 
 return CakeDecoratorArea

@@ -80,10 +80,13 @@ PlayerContext.Client.Comm:BindFunction("OvenCook", function(player, oven)
 	local hitbox = oven.OvenCookHitbox
 
 	local parts = Workspace:GetPartsInPart(hitbox)
+	if #parts > 0 then
+		parts = parts[1]:GetConnectedParts(true)
 
-	parts = TableUtil.Filter(parts, function(part)
-		return InstanceUtils.FindFirstAncestorWithTag(part, "Draggable") ~= nil
-	end)
+		parts = TableUtil.Filter(parts, function(part)
+			return InstanceUtils.FindFirstAncestorWithTag(part, "Draggable") ~= nil
+		end)
+	end
 
 	return CookingService.OvenCook(parts)
 end)

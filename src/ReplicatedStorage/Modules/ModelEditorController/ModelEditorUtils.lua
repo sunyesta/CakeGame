@@ -98,7 +98,8 @@ end
 
 function ModelEditorUtils.GetDirectlyMountedModels(model: Model)
 	return TableUtil.Filter(ModelEditorUtils.GetMountedModels(model), function(mountedModel)
-		local weld = mountedModel:FindFirstChild(ModelEditorServerSafeUtils.WELD_NAME)
+		local weld = ModelEditorServerSafeUtils.RequireWeld(mountedModel)
+
 		if not weld or not weld:IsA("WeldConstraint") then
 			return false
 		end
@@ -308,9 +309,13 @@ function ModelEditorUtils.RebuildSymmetryGroup(baseModel, counts)
 				end
 
 				local clone = baseModel:Clone()
-				for _, child in clone:GetChildren() do
-					if child.Name == ModelEditorServerSafeUtils.WELD_NAME and child:IsA("WeldConstraint") then
-						child:Destroy()
+
+				-- BUG FIX: Removing old welds from the PrimaryPart before creating a clone
+				if clone.PrimaryPart then
+					for _, child in clone.PrimaryPart:GetChildren() do
+						if child.Name == ModelEditorServerSafeUtils.WELD_NAME and child:IsA("WeldConstraint") then
+							child:Destroy()
+						end
 					end
 				end
 
@@ -425,12 +430,10 @@ function ModelEditorUtils.PrepareForMoving(model)
 		ModelEditorUtils.UpdateSymmetricalParts(model)
 
 		-- 1. Fetch the bounds part once per frame.
-		-- This is slightly more optimized than calling :Get() inside the loop.
 		local boundsPart = Props.BoundsPart:Get()
 
 		for trackedModel, highlight in trackedBoundsModels do
 			-- 2. Add 'boundsPart and' before your bounds check.
-			-- If boundsPart is nil, Luau will short-circuit and skip IsModelBoundsFullyInBounds entirely.
 			if
 				trackedModel:HasTag(ModelEditorServerSafeUtils.DiscardingTag)
 				or (
@@ -464,21 +467,18 @@ function ModelEditorUtils.ScaleStackTo(baseModel: Model, directChildren: table, 
 	local relativeOffsets = {}
 	local cachedWelds = {}
 
-	local baseWeld = baseModel:FindFirstChild(ModelEditorServerSafeUtils.WELD_NAME)
-	if baseWeld and baseWeld:IsA("WeldConstraint") then
-		baseWeld.Enabled = false
-	end
+	local baseWeld = ModelEditorServerSafeUtils.RequireWeld(baseModel)
+	baseWeld.Enabled = false
 
 	local initialBaseScale = baseModel:GetScale()
 	local scaleRatio = baseModelScale / initialBaseScale
 
 	for _, child in directChildren do
 		relativeOffsets[child] = baseModel:GetPivot():ToObjectSpace(child:GetPivot())
-		local weld = child:FindFirstChild(ModelEditorServerSafeUtils.WELD_NAME)
-		if weld and weld:IsA("WeldConstraint") and weld.Enabled then
-			weld.Enabled = false
-			cachedWelds[child] = weld
-		end
+
+		local weld = ModelEditorServerSafeUtils.RequireWeld(child)
+		weld.Enabled = false
+		cachedWelds[child] = weld
 	end
 
 	baseModel:ScaleTo(baseModelScale)
@@ -495,9 +495,7 @@ function ModelEditorUtils.ScaleStackTo(baseModel: Model, directChildren: table, 
 		end
 	end
 
-	if baseWeld and baseWeld:IsA("WeldConstraint") then
-		baseWeld.Enabled = true
-	end
+	baseWeld.Enabled = true
 end
 
 return ModelEditorUtils

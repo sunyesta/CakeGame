@@ -1,4 +1,4 @@
--- STREAMING_CHUNK:Initializing services and modules...
+-- Initializing services and modules...
 local CollectionService = game:GetService("CollectionService")
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -32,13 +32,15 @@ local CakeDecoratorGui = require(ReplicatedStorage.Common.Components.GUIs.CakeDe
 local TableUtil2 = require(ReplicatedStorage.NonWallyPackages.TableUtil2)
 local PlayerContext = require(ReplicatedStorage.Common.Controllers.PlayerContext)
 
+-- Instances
 local mouseTouch = MouseTouch.new()
 local Keyboard = Input.Keyboard.new()
 
+-- Constants
 local MaxDragDistance = 20
 local Player = Players.LocalPlayer
 
--- STREAMING_CHUNK:Defining the DraggableClient component...
+-- Defining the DraggableClient component...
 local DraggableClient = Component.new({
 	Tag = "Draggable",
 	Ancestors = { Workspace },
@@ -46,11 +48,7 @@ local DraggableClient = Component.new({
 DraggableClient.CanDrag = Property.new(true)
 
 ModelEditorController.Active:Observe(function(active)
-	if active then
-		DraggableClient.CanDrag:Set(false)
-	else
-		DraggableClient.CanDrag:Set(true)
-	end
+	DraggableClient.CanDrag:Set(not active)
 end)
 
 -- Helper method to handle both Models and BaseParts seamlessly
@@ -74,12 +72,12 @@ function DraggableClient:Construct()
 
 	self.PickupSound = SoundEffects.Pickup.Simple1
 	self.PutDownSound = SoundEffects.PutDown.Simple1
+	self.DragTarget = Property.new(nil)
 end
 
--- STREAMING_CHUNK:Setting up component start and stop methods...
+-- Setting up component start and stop methods...
 function DraggableClient:Start()
 	if self.Instance:IsA("Model") then
-		-- For models, wait until the PrimaryPart exists
 		local observablePrimaryPart = self._Trove:Add(ObservableInstance.fromPrimaryPart(self.Instance))
 
 		self._Trove:Add(observablePrimaryPart:Observe(function(RootPart, loadedTrove)
@@ -88,7 +86,6 @@ function DraggableClient:Start()
 			end
 		end))
 	elseif self.Instance:IsA("BasePart") then
-		-- For BaseParts, they are essentially their own PrimaryPart, so load immediately!
 		local loadedTrove = self._Trove:Extend()
 		self:Loaded(self.Instance, loadedTrove)
 	else
@@ -100,7 +97,7 @@ function DraggableClient:Stop()
 	self._Trove:Clean()
 end
 
--- STREAMING_CHUNK:Handling the Loaded event, sudden impact sounds, and click detection...
+-- Handling the Loaded event, sudden impact sounds, and click detection...
 function DraggableClient:Loaded(RootPart, trove)
 	local isCurrentlyHeld = false
 
@@ -113,8 +110,7 @@ function DraggableClient:Loaded(RootPart, trove)
 		end
 	end)
 
-	-- Monitor velocity to play put-down sound upon sudden impact/stops when not held
-	local VELOCITY_DROP_THRESHOLD = 15 -- Threshold for a "sudden stop"
+	local VELOCITY_DROP_THRESHOLD = 15
 	local lastVelocity = RootPart.AssemblyLinearVelocity
 	local lastImpactSoundTime = 0
 
@@ -124,10 +120,8 @@ function DraggableClient:Loaded(RootPart, trove)
 		if not isCurrentlyHeld then
 			local velocityDelta = (lastVelocity - currentVelocity).Magnitude
 
-			-- If the object suddenly loses a lot of velocity (e.g. hits a surface)
 			if velocityDelta >= VELOCITY_DROP_THRESHOLD then
 				local currentTime = os.clock()
-				-- Add a 0.2s debounce to prevent sound spam when bouncing rapidly
 				if currentTime - lastImpactSoundTime > 0.2 then
 					SoundUtils.PlaySoundOnceWithRandomSpeed(self.PutDownSound, RootPart)
 					lastImpactSoundTime = currentTime
@@ -141,7 +135,7 @@ function DraggableClient:Loaded(RootPart, trove)
 	local DRAG_THRESHOLD = 5
 
 	local cakeClickDetector = trove:Add(ClickDetector.new())
-	local mouseTouchLocal = trove:Add(MouseTouch.new()) -- Renamed to prevent shadowing the upvalue
+	local mouseTouchLocal = trove:Add(MouseTouch.new())
 
 	cakeClickDetector:SetResultFilterFunction(function(result)
 		return self.Instance:IsAncestorOf(result.Instance) or result.Instance == self.Instance
@@ -185,19 +179,18 @@ function DraggableClient:Loaded(RootPart, trove)
 	end))
 end
 
--- STREAMING_CHUNK:Configuring drag start and setting up state variables...
 function DraggableClient:OnDragStart()
 	return self:_MainDrag()
 end
 
--- STREAMING_CHUNK:Calculating the bounding ellipse bottom center...
+-- Calculating the bounding ellipse bottom center...
 function DraggableClient:_GetBottomCenterPositionOfBoundingEllipse(): Vector3
 	local rootPart = self:_GetRootPart()
 	if not rootPart then
 		return self.Instance:GetPivot().Position
 	end
 
-	local parts = rootPart:GetConnectedParts()
+	local parts = rootPart:GetConnectedParts(true)
 	local minX, minY, minZ = math.huge, math.huge, math.huge
 	local maxX, maxY, maxZ = -math.huge, -math.huge, -math.huge
 	local hasParts = false
@@ -238,10 +231,7 @@ function DraggableClient:_GetBottomCenterPositionOfBoundingEllipse(): Vector3
 	return Vector3.new((minX + maxX) * 0.5, minY, (minZ + maxZ) * 0.5)
 end
 
--- Keep this method as is
 function DraggableClient:_MainDrag()
-	local characterSizeOffset = Player.Character:GetExtentsSize().Y / 2
-
 	local dragTrove = Trove.new()
 
 	local cakePrimaryPart = self:_GetRootPart()
@@ -251,176 +241,111 @@ function DraggableClient:_MainDrag()
 
 	local cakeDrag = dragTrove:Add(PhysicsDrag.new(cakePrimaryPart))
 
-	-- 1. Pre-declare our math variables so they can be accessed inside our callbacks
-	local initialGrabPos: Vector3
-	local originalPivot: CFrame
-	local accumulatedRotation: CFrame = CFrame.new()
-	local screenOffset: Vector2 = Vector2.zero
-	local initialMousePos = mouseTouch:GetPosition()
-
-	-- State variables for rotation
-	local isRotating = false
-	local wasRotating = false
-	local lockedVirtualMousePos = nil
-
-	local lastTargetPos = cakePrimaryPart.Position
-	local rotationSensitivity = 0.015
-
-	-- Connecting keyboard input for manual rotation...
-	dragTrove:Add(Keyboard.KeyDown:Connect(function(keycode)
-		if keycode == Enum.KeyCode.R then
-			isRotating = true
-		end
-	end))
-
-	dragTrove:Add(Keyboard.KeyUp:Connect(function(keycode)
-		if keycode == Enum.KeyCode.R then
-			isRotating = false
-			-- Explicitly return mouse to default when R is let go
-			UserInputService.MouseBehavior = Enum.MouseBehavior.Default
-		end
-	end))
+	-- State variables setup
+	local virtualMousePos: Vector2 = Vector2.zero
 
 	local worldRayParams = RaycastParams.new()
 	worldRayParams.FilterType = Enum.RaycastFilterType.Exclude
 
-	local dragTarget = nil
-
-	-- 2. Wait until the PhysicsDrag module breaks the welds, THEN calculate offsets
+	-- Wait until the PhysicsDrag module breaks the welds
 	cakeDrag:OnInit(function(dragTrove1)
-		-- Setup raycast filters AFTER unwelding so we don't accidentally filter the floor!
 		local connectedParts = cakePrimaryPart:GetConnectedParts(true)
 		worldRayParams.FilterDescendantsInstances = connectedParts
 		worldRayParams:AddToFilter(Player.Character)
 
-		-- Get initial grab position (Now that the bounding ellipse is just the object)
-		initialGrabPos = self:_GetBottomCenterPositionOfBoundingEllipse()
+		local initialGrabPos = self:_GetBottomCenterPositionOfBoundingEllipse()
 
-		-- Rotation Variables
-		originalPivot = cakePrimaryPart:GetPivot()
-		accumulatedRotation = originalPivot.Rotation
+		-- BUG FIX: Initialize the grounded position right when the drag begins!
+		self._LastTargetPos = initialGrabPos
+
+		-- FIX JITTER: Track mathematical target rotation separate from physics engine
+		self._TargetRotation = self.Instance:GetPivot().Rotation
 
 		if CollectionService:HasTag(self.Instance, "DragUpright") then
-			local _pitch, yaw, _roll = accumulatedRotation:ToEulerAnglesYXZ()
-			accumulatedRotation = CFrame.Angles(0, yaw, 0)
+			local _pitch, yaw, _roll = self._TargetRotation:ToEulerAnglesYXZ()
+			self._TargetRotation = CFrame.Angles(0, yaw, 0)
 		end
 
-		-- Calculate Screen-Space Offset
-		local camera = workspace.CurrentCamera
-		local pivotScreenPos3D = camera:WorldToViewportPoint(initialGrabPos)
-		local pivotScreenPos2D = Vector2.new(pivotScreenPos3D.X, pivotScreenPos3D.Y)
-
-		screenOffset = pivotScreenPos2D - initialMousePos
+		local pivotScreenPos3D = workspace.CurrentCamera:WorldToViewportPoint(initialGrabPos)
+		virtualMousePos = Vector2.new(pivotScreenPos3D.X, pivotScreenPos3D.Y)
 	end)
 
-	-- Setting up the drag style and calculating positions...
+	-- Must call GetPosition on the instance, not the class module
+	local lastMousePos = mouseTouch:GetPosition()
+
 	cakeDrag:SetDragStyle(function()
-		-- 1. DETERMINE ROTATION STATE FIRST
-		local unprocessedCount = 0
-		local touchPositions = MultiTouch.TouchPositions:Get()
+		local isRotating: boolean = self:_IsRotating()
 
-		if touchPositions then
-			for _, touchData in pairs(touchPositions) do
-				if touchData.TouchType == MultiTouch.TouchType.Unprocessed then
-					unprocessedCount += 1
-				end
-			end
-		end
+		-- Check if the player is currently holding Right-Click to orbit the camera
+		local isOrbiting: boolean = UserInputService:IsMouseButtonPressed(Enum.UserInputType.MouseButton2)
 
-		local isTouchRotating = unprocessedCount >= 2
-		local currentlyRotating = isRotating or isTouchRotating
+		-- get mousedelta
+		local currentMousePos = mouseTouch:GetPosition()
+		local mouseDelta: Vector2 = Vector2.new(0, 0)
 
-		-- Manage the screen-space lock state so the raycast doesn't slide around
-		if currentlyRotating and not wasRotating then
-			-- We just started rotating! Lock the screen position.
-			lockedVirtualMousePos = mouseTouch:GetPosition() + screenOffset
-		elseif not currentlyRotating and wasRotating then
-			-- We stopped rotating. Release the lock.
-			lockedVirtualMousePos = nil
-		end
-		wasRotating = currentlyRotating
-
-		-- 2. CALCULATE POSITION
-		local rayDistance = (Player.Character.HumanoidRootPart.Position - Workspace.CurrentCamera.CFrame.Position).Magnitude
-			+ characterSizeOffset
-
-		-- If we are locked in rotation, use the locked screen position. Otherwise use the live position.
-		local virtualMousePos = lockedVirtualMousePos or (mouseTouch:GetPosition() + screenOffset)
-		local virtualRay = mouseTouch:GetRay(virtualMousePos)
-
-		local result = mouseTouch:Raycast(worldRayParams, rayDistance, virtualMousePos)
-
-		local targetPos
-		if result then
-			targetPos = result.Position
-			dragTarget = result.Instance
-		else
-			targetPos = virtualRay.Origin + (virtualRay.Direction * rayDistance)
-			dragTarget = nil
-		end
-
-		local distance = (targetPos - Player.Character.HumanoidRootPart.Position).Magnitude
-		if distance > MaxDragDistance then
-			dragTrove:Clean()
-			dragTarget = nil
-		end
-
-		-- Update last target position
-		lastTargetPos = targetPos
-
-		-- 3. PROCESS ROTATION DELTAS
-		if currentlyRotating then
-			-- ENFORCEMENT: Keep mouse locked while rotating
+		if isRotating then
 			UserInputService.MouseBehavior = Enum.MouseBehavior.LockCurrentPosition
+			mouseDelta = UserInputService:GetMouseDelta()
+		else
+			-- Only enforce the Default behavior if the user isn't trying to orbit the camera!
+			if not isOrbiting then
+				UserInputService.MouseBehavior = Enum.MouseBehavior.Default
+			end
+			mouseDelta = currentMousePos - lastMousePos
+		end
+		lastMousePos = currentMousePos
 
-			-- Get mouse movement since last frame
-			local mouseDelta = -UserInputService:GetMouseDelta()
+		local finalCFrame = nil
 
-			-- Pitch (Up/Down Mouse Movement) -> Rotates around Camera's Right Vector
-			local pitch = -mouseDelta.Y * rotationSensitivity
-			-- Yaw (Left/Right Mouse Movement) -> Rotates around World Up Vector
-			local yaw = -mouseDelta.X * rotationSensitivity
-
-			-- Create Rotation CFrames
-			local rotationY = CFrame.fromAxisAngle(Vector3.yAxis, yaw)
-			local rotationX = CFrame.fromAxisAngle(Workspace.CurrentCamera.CFrame.RightVector, pitch)
-
-			-- Multiply the new delta rotation onto our existing rotation
-			accumulatedRotation = rotationY * rotationX * accumulatedRotation
+		if isRotating then
+			finalCFrame, virtualMousePos = self:_RotatingLogic(virtualMousePos, mouseDelta)
+		else
+			finalCFrame, virtualMousePos = self:_MovingLogic(virtualMousePos, mouseDelta, worldRayParams)
 		end
 
+		-- Feed the visual cursor our custom virtual mouse pos
 		ClickDetector.OverrideCursorPosition = Vector3.new(virtualMousePos.X, virtualMousePos.Y, 0)
 		ClickDetector.OverrideIcon = MouseIcons.GrabClosed
 
-		-- 4. COMBINE AND RETURN
-		return CFrame.new(targetPos) * accumulatedRotation
+		-- COMBINE AND RETURN
+		return finalCFrame
 	end)
 
-	-- Setting up physics style for dragging...
 	cakeDrag:SetPhysicsStyle(
 		function(originPart: BasePart, grabPart: BasePart, grabPosition: Vector3, dragTrove1: typeof(Trove.new()))
 			local originAttachment = dragTrove1:Add(Instance.new("Attachment"))
 			originAttachment.Parent = originPart
 			originAttachment.Visible = false
 
-			-- Setup the grab Attachment
-			local grabAttachment: Attachment = dragTrove:Add(Instance.new("Attachment"))
+			local grabAttachment: Attachment = dragTrove1:Add(Instance.new("Attachment"))
 			grabAttachment.Parent = cakePrimaryPart
 			grabAttachment.Visible = false
-			grabAttachment.Orientation = Vector3.zero
+			grabAttachment.CFrame = cakePrimaryPart.PivotOffset
 
-			-- Dynamically update ONLY the WorldPosition based on the AABB
 			originPart.Position = self:_GetBottomCenterPositionOfBoundingEllipse()
 			grabAttachment.WorldPosition = self:_GetBottomCenterPositionOfBoundingEllipse()
-			dragTrove:Add(RunService.Stepped:Connect(function()
+
+			dragTrove1:Add(RunService.Stepped:Connect(function()
 				grabAttachment.WorldPosition = self:_GetBottomCenterPositionOfBoundingEllipse()
 			end))
 
-			dragTrove1:Add(AlignCFrame.new(grabPart, grabAttachment, originAttachment))
+			local constraintsCreated = false
+
+			dragTrove1:Add(RunService.RenderStepped:Connect(function()
+				if not cakeDrag:HasNetworkOwnership() then
+					cakePrimaryPart:PivotTo(originAttachment.WorldCFrame * grabAttachment.CFrame:Inverse())
+					cakePrimaryPart.AssemblyLinearVelocity = Vector3.zero
+					cakePrimaryPart.AssemblyAngularVelocity = Vector3.zero
+				else
+					if not constraintsCreated then
+						constraintsCreated = true
+						dragTrove1:Add(AlignCFrame.new(grabPart, grabAttachment, originAttachment))
+					end
+				end
+			end))
 		end
 	)
 
-	-- Finishing drag setup and starting drag behavior...
 	if UserInputService.PreferredInput == Enum.PreferredInput.Touch then
 		Cameras.PlayerCamera.Props.FreezeCamera:Set(true)
 		dragTrove:Add(function()
@@ -438,10 +363,10 @@ function DraggableClient:_MainDrag()
 			dragTrove:Add(mouseTouch.LeftUp:Connect(function()
 				cakeDrag:StopDrag()
 
+				local dragTarget = self.DragTarget:Get()
 				if dragTarget and InstanceUtils.FindFirstAncestorWithTag(dragTarget, "Surface") then
 					cakeDrag:Weld(dragTarget)
 					dragTrove:Clean()
-
 					self:_HandleCakeBuildPlatform(dragTarget)
 				else
 					dragTrove:Clean()
@@ -458,82 +383,8 @@ function DraggableClient:_MainDrag()
 	return dragTrove
 end
 
--- STREAMING_CHUNK:Configuring the alternate drag behavior...
-function DraggableClient:_AltDrag()
-	local dragTrove = self._Trove:Extend()
-
-	local primaryPart = self:_GetRootPart()
-	if not primaryPart then
-		return dragTrove
-	end
-
-	local drag = dragTrove:Add(PhysicsDrag.new(primaryPart))
-
-	drag:SetPhysicsStyle(
-		function(originPart: BasePart, grabPart: BasePart, grabPosition: Vector3, dragTrove1: typeof(Trove.new()))
-			-- Setup origin attachment
-			local originAttachment = dragTrove1:Add(Instance.new("Attachment"))
-			originAttachment.Visible = true
-			originAttachment.Parent = originPart
-
-			-- Setup the grab Attachment
-			local grabAttachment: Attachment = dragTrove1:Add(Instance.new("Attachment"))
-			grabAttachment.Visible = true
-
-			grabAttachment.Parent = grabPart
-			grabAttachment.WorldCFrame = grabPosition
-
-			local alignPosition: AlignPosition = dragTrove1:Add(Instance.new("AlignPosition"))
-			alignPosition.Responsiveness = 200
-			alignPosition.MaxForce = math.huge
-			alignPosition.MaxVelocity = math.huge
-			alignPosition.Mode = Enum.PositionAlignmentMode.TwoAttachment
-			alignPosition.Attachment0 = grabAttachment
-			alignPosition.Attachment1 = originAttachment
-			alignPosition.Parent = grabPart
-
-			local alignOrientation: AlignOrientation = dragTrove1:Add(Instance.new("AlignOrientation"))
-			alignOrientation.Responsiveness = 200
-			alignOrientation.MaxTorque = math.huge
-			alignOrientation.MaxAngularVelocity = math.huge
-			alignOrientation.Mode = Enum.OrientationAlignmentMode.TwoAttachment
-			alignOrientation.Attachment0 = grabAttachment
-			alignOrientation.Attachment1 = originAttachment
-			alignOrientation.Parent = grabPart
-		end
-	)
-
-	drag:SetDragStyle(function()
-		local rayDistance = (Player.Character.HumanoidRootPart.Position - Workspace.CurrentCamera.CFrame.Position).Magnitude
-
-		local mousePos = mouseTouch:GetPosition()
-		local ray = mouseTouch:GetRay(mousePos)
-
-		local pos = ray.Origin + (ray.Direction * rayDistance)
-
-		return CFrame.new(pos)
-	end)
-
-	drag:StartDrag():andThen(function(dragSuccess, message)
-		if dragSuccess then
-			dragTrove:Add(mouseTouch.LeftUp:Connect(function()
-				drag:StopDrag()
-				dragTrove:Clean()
-			end))
-		else
-			dragTrove:Clean()
-			SoundUtils.PlaySoundOnce(SoundEffects.Error, primaryPart)
-			self._LockGui:ShowOn(primaryPart)
-			warn(message)
-		end
-	end)
-
-	return dragTrove
-end
-
 function DraggableClient:GetConnectedDraggableModels()
 	local draggables = {}
-	-- Use your safe helper method instead of assuming self.Instance.PrimaryPart!
 	local rootPart = self:_GetRootPart()
 
 	if not rootPart then
@@ -541,12 +392,10 @@ function DraggableClient:GetConnectedDraggableModels()
 	end
 
 	for _, part in rootPart:GetConnectedParts(true) do
-		-- Check if the part itself is a standalone draggable
 		if part:HasTag("Draggable") then
 			draggables[part] = true
 		end
 
-		-- Check if it belongs to a draggable model
 		local model = part:FindFirstAncestorWhichIsA("Model")
 		if model and model:HasTag("Draggable") then
 			draggables[model] = true
@@ -561,7 +410,6 @@ function DraggableClient:_HandleCakeBuildPlatform(dragTarget)
 		local connectedModels = self:GetConnectedDraggableModels()
 		local saveData = ModelEditorServerSafeUtils.SaveFromModels(dragTarget, connectedModels, "PhysicsDragWeld")
 
-		-- Pass the array of connected models to the server, rather than relying on the server to figure it out
 		PlayerContext.Comm
 			:DestroyConnectedDraggables(connectedModels)
 			:andThen(function()
@@ -569,10 +417,91 @@ function DraggableClient:_HandleCakeBuildPlatform(dragTarget)
 				ModelEditorController.Load(saveData)
 			end)
 			:catch(function(err)
-				-- Added a catch block to log any unexpected errors
 				warn("Failed to destroy draggables on server:", err)
 			end)
 	end
+end
+
+function DraggableClient:_IsRotating()
+	if UserInputService.PreferredInput == Enum.PreferredInput.Touch then
+		local unprocessedCount = 0
+		local touchPositions = MultiTouch.TouchPositions:Get()
+
+		if touchPositions then
+			for _, touchData in pairs(touchPositions) do
+				if touchData.TouchType == MultiTouch.TouchType.Unprocessed then
+					unprocessedCount += 1
+				end
+			end
+		end
+
+		return unprocessedCount >= 2
+	else
+		return Keyboard:IsKeyDown(Enum.KeyCode.R)
+	end
+end
+
+function DraggableClient:_MovingLogic(virtualMousePos, mouseDelta, worldRayParams)
+	-- Moving logic
+	virtualMousePos += mouseDelta
+
+	-- CALCULATE POSITION using the Virtual Mouse
+	local rayDistance = (Player.Character.HumanoidRootPart.Position - Workspace.CurrentCamera.CFrame.Position).Magnitude
+		+ 30
+	local virtualRay = mouseTouch:GetRay(virtualMousePos)
+	local result = mouseTouch:Raycast(worldRayParams, rayDistance, virtualMousePos)
+
+	local dragTarget
+	local targetPos
+
+	if result then
+		targetPos = result.Position
+		dragTarget = result.Instance
+	else
+		targetPos = virtualRay.Origin + (virtualRay.Direction * rayDistance)
+		dragTarget = nil
+	end
+
+	self.DragTarget:Set(dragTarget)
+
+	-- BUG FIX: Track the perfectly grounded position every time we move successfully.
+	self._LastTargetPos = targetPos
+
+	-- FIX JITTER: Use our smoothly tracked TargetRotation while moving so transitioning is seamless
+	local currentRotation = self._TargetRotation or self.Instance:GetPivot().Rotation
+	local finalCFrame = CFrame.new(targetPos) * currentRotation
+
+	return finalCFrame, virtualMousePos
+end
+
+function DraggableClient:_RotatingLogic(virtualMousePos, mouseDelta)
+	local horizontalRotationSensitivity = 0.015
+	local verticalRotationSensitivity = 0.015
+
+	local pitch = -mouseDelta.Y * verticalRotationSensitivity
+	local yaw = -mouseDelta.X * horizontalRotationSensitivity
+
+	-- Force pitch to 0 if we want it to stay completely upright
+	if CollectionService:HasTag(self.Instance, "DragUpright") then
+		pitch = 0
+	end
+
+	-- 1. Create the rotation changes based on user input
+	local rotationY = CFrame.fromAxisAngle(Vector3.yAxis, yaw)
+	local rotationX = CFrame.fromAxisAngle(Workspace.CurrentCamera.CFrame.RightVector, pitch)
+	local deltaRotation = rotationY * rotationX
+
+	-- 2. FIX JITTER: Apply delta rotation to our tracked TARGET rotation, avoiding physics lag!
+	local currentRotation = self._TargetRotation or self.Instance:GetPivot().Rotation
+	self._TargetRotation = deltaRotation * currentRotation
+
+	-- 3. BUG FIX: Use the last known grounded position instead of current pivot position!
+	local targetPos = self._LastTargetPos or self.Instance:GetPivot().Position
+
+	-- 4. Combine the grounded target position with the newly calculated rotation
+	local finalCFrame = CFrame.new(targetPos) * self._TargetRotation
+
+	return finalCFrame, virtualMousePos
 end
 
 return DraggableClient

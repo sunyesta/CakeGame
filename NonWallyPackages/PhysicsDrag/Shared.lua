@@ -4,6 +4,26 @@ local Shared = {}
 
 Shared.DEBUG = false
 
+-- Calculates the lowest Y coordinate of a part's bounding box relative to the world axis
+function Shared.GetBottomY(part: BasePart): number
+	local cf = part.CFrame
+	local size = part.Size / 2
+
+	-- Calculate how far down the bounding box extends on the world Y axis based on rotation
+	local extentsY = math.abs(cf.RightVector.Y) * size.X
+		+ math.abs(cf.UpVector.Y) * size.Y
+		+ math.abs(cf.LookVector.Y) * size.Z
+
+	return cf.Y - extentsY
+end
+
+-- Returns true if partA's world bounding box bottom is higher up than partB's
+function Shared.IsPartOnTop(partA: BasePart, partB: BasePart): boolean
+	-- Using a small epsilon (0.001) to prevent floating point inaccuracies
+	-- from breaking welds if parts are exactly perfectly side-by-side
+	return Shared.GetBottomY(partA) > Shared.GetBottomY(partB) + 0.001
+end
+
 -- Returns true if the part is currently eligible for network ownership
 -- transfer. A part is ineligible when it is anchored OR when it is welded
 -- (directly or transitively) to an anchored part.

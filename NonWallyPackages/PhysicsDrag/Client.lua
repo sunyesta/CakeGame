@@ -22,7 +22,8 @@ local defaultPhysicsStyle = function(
 	originPart: BasePart,
 	grabPart: BasePart,
 	grabPosition: Vector3,
-	dragTrove: typeof(Trove.new())
+	dragTrove: typeof(Trove.new()),
+	dragClient -- NEW: Passed in so we can check network ownership state
 )
 	local originAttachment = dragTrove:Add(Instance.new("Attachment"))
 	originAttachment.Parent = originPart
@@ -33,7 +34,26 @@ local defaultPhysicsStyle = function(
 	grabAttachment.Visible = false
 	grabAttachment.WorldCFrame = grabPart:GetPivot()
 
-	dragTrove:Add(AlignCFrame.new(grabPart, grabAttachment, originAttachment))
+	-- NEW: Track whether constraints have been created
+	local constraintsCreated = false
+
+	-- NEW: Manually snap the part on RenderStepped while waiting for ownership
+	dragTrove:Add(RunService.RenderStepped:Connect(function()
+		if dragClient and not dragClient:HasNetworkOwnership() then
+			-- Bypass physics and snap the part locally
+			grabPart:PivotTo(originAttachment.WorldCFrame * grabAttachment.CFrame:Inverse())
+
+			-- Prevent momentum buildup while we manually move the part
+			grabPart.AssemblyLinearVelocity = Vector3.zero
+			grabPart.AssemblyAngularVelocity = Vector3.zero
+		else
+			-- Ownership granted! Hand over to Roblox physics
+			if not constraintsCreated then
+				constraintsCreated = true
+				dragTrove:Add(AlignCFrame.new(grabPart, grabAttachment, originAttachment))
+			end
+		end
+	end))
 end
 
 local function createPhysicsOriginPart(grabPart: BasePart)
@@ -64,15 +84,20 @@ function PhysicsDragClient.new(grabPart: BasePart)
 	self._Init = function() end
 
 	self._IsHeld = NetworkProperty.require(grabPart, "IsHeld", false)
-	self._IsDropping = false -- Lock to prevent spam-clicking and attribute bouncing
+	self._IsDropping = false
+	self._HasNetworkOwnership = Property.BindToInstanceAttribute(self._Instance, "PhysicsDrag_NetworkOwner")
 
 	return self
+end
+
+-- NEW: Expose ownership state
+function PhysicsDragClient:HasNetworkOwnership()
+	return self._HasNetworkOwnership:Get()
 end
 
 function PhysicsDragClient:StartDrag(grabPos: Vector3?)
 	grabPos = grabPos or self:_GetGrabCFrame()
 
-	-- Reject if already dragging, OR if waiting for the server to process a drop
 	if self._IsHeld:Get() or self._IsDropping then
 		if Shared.DEBUG then
 			warn("[PhysicsDrag] Rejected: Already dragging or waiting for drop resolution")
@@ -80,7 +105,6 @@ function PhysicsDragClient:StartDrag(grabPos: Vector3?)
 		return Promise.resolve(false)
 	end
 
-	-- Instant rejection utilizing the universal Shared.CanDrag function
 	local canDrag, reason = Shared.CanDrag(Player, self._Instance)
 	if not canDrag then
 		if Shared.DEBUG then
@@ -101,18 +125,18 @@ function PhysicsDragClient:StartDrag(grabPos: Vector3?)
 		end)
 
 		for _, constraint in self._Instance:GetJoints() do
-			if
-				constraint.Name == "ClientTempPhysicsDragWeld"
-				or constraint.Name == "PhysicsDragWeld" and constraint.Part1 == self._Instance
-			then
+			if constraint.Name == "ClientTempPhysicsDragWeld" then
 				constraint:Destroy()
+			elseif constraint.Name == "PhysicsDragWeld" then
+				local otherPart = constraint.Part0 == self._Instance and constraint.Part1 or constraint.Part0
+				if otherPart and Shared.IsPartOnTop(self._Instance, otherPart) then
+					constraint:Destroy()
+				end
 			end
 		end
 
-		-- -- Turn off collisions immediately for the client
 		Shared.TurnOffCollisions(self._Instance)
 
-		-- Ensure collisions are restored locally when the drag is finished/cleaned up
 		dragTrove:Add(function()
 			if self._Instance.Parent then
 				Shared.RestoreCollisions(self._Instance)
@@ -127,10 +151,12 @@ function PhysicsDragClient:StartDrag(grabPos: Vector3?)
 		end
 
 		self._Init(dragTrove)
-		self._PhysicsStyle(physicsOriginPart, self._Instance, grabPos, dragTrove)
+
+		-- NEW: Pass `self` as the 5th argument so defaultPhysicsStyle can check ownership
+		self._PhysicsStyle(physicsOriginPart, self._Instance, grabPos, dragTrove, self)
+
 		self._GeometricDrag:StartDrag()
 
-		-- Teleport handling / Failsafe
 		local lastTargetPos = physicsOriginPart.Position
 		dragTrove:Add(RunService.Heartbeat:Connect(function()
 			if not self._IsHeld:Get() then
@@ -140,7 +166,6 @@ function PhysicsDragClient:StartDrag(grabPos: Vector3?)
 			local currentTargetPos = physicsOriginPart.Position
 			local distance = (currentTargetPos - lastTargetPos).Magnitude
 
-			-- Failsafe: Snap part if it lags too far behind the target (e.g. Player teleported)
 			if distance > TELEPORT_THRESHOLD then
 				self._Instance:PivotTo(physicsOriginPart.CFrame)
 
@@ -180,22 +205,21 @@ function PhysicsDragClient:StopDrag()
 	end
 
 	self._IsHeld:Set(false)
-	self._IsDropping = true -- Engage the network lock
+	self._IsDropping = true
 
 	if self._DragTrove then
 		self._DragTrove:Clean()
 		self._DragTrove = nil
 	end
 
-	-- Send drop request to server, returning the Promise
 	return self._DragComm
 		:SetOwnershipState(false)
 		:andThen(function(serverSuccess, serverStatus)
-			self._IsDropping = false -- Release the network lock
+			self._IsDropping = false
 			return true
 		end)
 		:catch(function(err)
-			self._IsDropping = false -- Release the network lock on error
+			self._IsDropping = false
 			if Shared.DEBUG then
 				warn("[PhysicsDrag] Failed to release ownership:", err)
 			end
@@ -215,7 +239,6 @@ function PhysicsDragClient:Weld(surfacePart)
 		return
 	end
 
-	-- Temporarily weld locally to keep it visually snappy while waiting for server response
 	local tempWeld = Instance.new("WeldConstraint")
 	tempWeld.Name = "ClientTempPhysicsDragWeld"
 	tempWeld.Part0 = self._Instance
@@ -275,7 +298,6 @@ function PhysicsDragClient:_GetGrabCFrame()
 	end
 end
 
--- is called after welds are broken but before dragging starts
 function PhysicsDragClient:OnInit(callback)
 	self._Init = callback
 end
