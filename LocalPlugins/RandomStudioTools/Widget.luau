@@ -11,11 +11,11 @@ local ReplaceMesh = require(script.Parent.Tools.ReplaceMesh)
 local SpecialMeshConverter = require(script.Parent.Tools.SpecialMeshConverter)
 local AutoPrimaryPart = require(script.Parent.Tools.AutoPrimaryPart)
 local SelectSimilar = require(script.Parent.Tools.SelectSimilar)
-local AspectRatioResizer = require(script.Parent.Tools.AspectRatioResizer)
 local MoveTool = require(script.Parent.Tools.MoveTool)
 local WeldTool = require(script.Parent.Tools.WeldTool) -- NEW REQUIRED MODULE
 local SeparateTool = require(script.Parent.Tools.SeparateTool)
 local ReplaceAsset = require(script.Parent.Tools.ReplaceAsset)
+local AspectRatioTool = require(script.Parent.Tools.AspectRatioTool)
 
 local THEME = Config.THEME
 local ICONS = Config.ICONS
@@ -175,10 +175,6 @@ function Widget.Init(plugin: Plugin, pluginTrove: any)
 	local selectSimilarSection = SelectSimilar.Create()
 	selectSimilarSection.Parent = scrollFrame
 
-	-- [[ 4H. ASPECT RATIO RESIZER SECTION ]] --
-	local aspectSection = AspectRatioResizer.Create()
-	aspectSection.Parent = scrollFrame
-
 	-- [[ 4I. MOVE TOOL SECTION ]] --
 	local moveToolSection = MoveTool.Create()
 	moveToolSection.Parent = scrollFrame
@@ -198,6 +194,10 @@ function Widget.Init(plugin: Plugin, pluginTrove: any)
 	-- [[ 4J. Replace TOOL SECTION ]] --
 	local replaceAssetSection = ReplaceAsset.Create()
 	replaceAssetSection.Parent = scrollFrame
+
+	-- [[ 4J. Replace TOOL SECTION ]] --
+	local aspectRatio = AspectRatioTool.Create()
+	aspectRatio.Parent = scrollFrame
 
 	pluginTrove:Add(gui)
 

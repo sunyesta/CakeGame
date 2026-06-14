@@ -229,7 +229,7 @@ function PhysicsDragServer.CreateDragHandler(part: BasePart)
 			for _, constraint in self.Instance:GetJoints() do
 				if constraint.Name == "PhysicsDragWeld" then
 					local otherPart = constraint.Part0 == self.Instance and constraint.Part1 or constraint.Part0
-					if otherPart and Shared.IsPartOnTop(self.Instance, otherPart) then
+					if otherPart and constraint.Part1 == self.Instance then
 						print("server joint unwelded", constraint)
 						constraint:Destroy()
 					end

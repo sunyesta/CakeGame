@@ -31,6 +31,7 @@ local ModelEditorController = require(ReplicatedStorage.Common.Modules.ModelEdit
 local CakeDecoratorGui = require(ReplicatedStorage.Common.Components.GUIs.CakeDecoratorGui)
 local TableUtil2 = require(ReplicatedStorage.NonWallyPackages.TableUtil2)
 local PlayerContext = require(ReplicatedStorage.Common.Controllers.PlayerContext)
+local CakeUtils = require(ReplicatedStorage.Common.Modules.CakeUtils)
 
 -- Instances
 local mouseTouch = MouseTouch.new()
@@ -73,6 +74,10 @@ function DraggableClient:Construct()
 	self.PickupSound = SoundEffects.Pickup.Simple1
 	self.PutDownSound = SoundEffects.PutDown.Simple1
 	self.DragTarget = Property.new(nil)
+
+	-- Now storing both Position Offset and Rotation Offset in a CFrame!
+	self.DragOffset = Property.new(CFrame.new())
+	self.RotateWhileMoving = Property.new(true)
 end
 
 -- Setting up component start and stop methods...
@@ -114,22 +119,25 @@ function DraggableClient:Loaded(RootPart, trove)
 	local lastVelocity = RootPart.AssemblyLinearVelocity
 	local lastImpactSoundTime = 0
 
+	-- play sounds when dropped
 	trove:Add(RunService.Heartbeat:Connect(function()
-		local currentVelocity = RootPart.AssemblyLinearVelocity
+		if self.Instance.PrimaryPart == self.Instance.PrimaryPart.AssemblyRootPart then
+			local currentVelocity = RootPart.AssemblyLinearVelocity
 
-		if not isCurrentlyHeld then
-			local velocityDelta = (lastVelocity - currentVelocity).Magnitude
+			if not isCurrentlyHeld then
+				local velocityDelta = (lastVelocity - currentVelocity).Magnitude
 
-			if velocityDelta >= VELOCITY_DROP_THRESHOLD then
-				local currentTime = os.clock()
-				if currentTime - lastImpactSoundTime > 0.2 then
-					SoundUtils.PlaySoundOnceWithRandomSpeed(self.PutDownSound, RootPart)
-					lastImpactSoundTime = currentTime
+				if velocityDelta >= VELOCITY_DROP_THRESHOLD then
+					local currentTime = os.clock()
+					if currentTime - lastImpactSoundTime > 0.2 then
+						SoundUtils.PlaySoundOnceWithRandomSpeed(self.PutDownSound, RootPart)
+						lastImpactSoundTime = currentTime
+					end
 				end
 			end
-		end
 
-		lastVelocity = currentVelocity
+			lastVelocity = currentVelocity
+		end
 	end))
 
 	local DRAG_THRESHOLD = 5
@@ -255,19 +263,51 @@ function DraggableClient:_MainDrag()
 
 		local initialGrabPos = self:_GetBottomCenterPositionOfBoundingEllipse()
 
-		-- BUG FIX: Initialize the grounded position right when the drag begins!
+		-- FIX: Initialize both the grounded position AND the grounded CFrame right when the drag begins!
 		self._LastTargetPos = initialGrabPos
 
-		-- FIX JITTER: Track mathematical target rotation separate from physics engine
-		self._TargetRotation = self.Instance:GetPivot().Rotation
-
+		local startRot = self.Instance:GetPivot().Rotation
 		if CollectionService:HasTag(self.Instance, "DragUpright") then
-			local _pitch, yaw, _roll = self._TargetRotation:ToEulerAnglesYXZ()
-			self._TargetRotation = CFrame.Angles(0, yaw, 0)
+			local _pitch, yaw, _roll = startRot:ToEulerAnglesYXZ()
+			startRot = CFrame.Angles(0, yaw, 0)
 		end
 
-		local pivotScreenPos3D = workspace.CurrentCamera:WorldToViewportPoint(initialGrabPos)
+		-- Store the initial baseline CFrame for rotation math
+		self._LastTargetCFrame = CFrame.new(initialGrabPos) * startRot
+
+		-- Grab current pos offset BEFORE setting the final DragOffset
+		local currentPosOffset = self.DragOffset:Get().Position
+
+		-- Initialize virtualMousePos early so we can do an initial raycast to find the surface normal
+		local pivotScreenPos3D = workspace.CurrentCamera:WorldToViewportPoint(initialGrabPos - currentPosOffset)
 		virtualMousePos = Vector2.new(pivotScreenPos3D.X, pivotScreenPos3D.Y)
+
+		-- Perform the exact same raycast _MovingLogic will do, to find out what surface we're resting on
+		local camera = workspace.CurrentCamera
+		local hrpPos = camera.CFrame.Position
+		if Player.Character and Player.Character:FindFirstChild("HumanoidRootPart") then
+			hrpPos = Player.Character.HumanoidRootPart.Position
+		end
+		local rayDistance = (hrpPos - camera.CFrame.Position).Magnitude + 30
+		local result = mouseTouch:Raycast(worldRayParams, rayDistance, virtualMousePos)
+
+		local initialHitNormal = Vector3.yAxis
+		if result and InstanceUtils.FindFirstAncestorWithTag(result.Instance, "NormalSnapSurface") then
+			initialHitNormal = result.Normal
+		end
+
+		local right = Vector3.yAxis:Cross(initialHitNormal)
+		if right.Magnitude < 0.001 then
+			right = Vector3.xAxis
+		else
+			right = right.Unit
+		end
+		local back = right:Cross(initialHitNormal).Unit
+		local initialSurfaceRotation = CFrame.fromMatrix(Vector3.zero, right, initialHitNormal, back)
+
+		-- Extract the local rotation offset relative to the surface and store it!
+		local localRotOffset = initialSurfaceRotation:Inverse() * startRot
+		self.DragOffset:Set(CFrame.new(currentPosOffset) * localRotOffset)
 	end)
 
 	-- Must call GetPosition on the instance, not the class module
@@ -275,30 +315,24 @@ function DraggableClient:_MainDrag()
 
 	cakeDrag:SetDragStyle(function()
 		local isRotating: boolean = self:_IsRotating()
+		local isVerticalMoving = Keyboard:IsKeyDown(Enum.KeyCode.Z)
+		local isHorizontalMoving = Keyboard:IsKeyDown(Enum.KeyCode.X)
 
 		-- Check if the player is currently holding Right-Click to orbit the camera
 		local isOrbiting: boolean = UserInputService:IsMouseButtonPressed(Enum.UserInputType.MouseButton2)
 
-		-- get mousedelta
-		local currentMousePos = mouseTouch:GetPosition()
-		local mouseDelta: Vector2 = Vector2.new(0, 0)
-
-		if isRotating then
-			UserInputService.MouseBehavior = Enum.MouseBehavior.LockCurrentPosition
-			mouseDelta = UserInputService:GetMouseDelta()
-		else
-			-- Only enforce the Default behavior if the user isn't trying to orbit the camera!
-			if not isOrbiting then
-				UserInputService.MouseBehavior = Enum.MouseBehavior.Default
-			end
-			mouseDelta = currentMousePos - lastMousePos
-		end
-		lastMousePos = currentMousePos
+		local mouseDelta =
+			self:_GetMouseDelta(lastMousePos, isRotating, isVerticalMoving, isHorizontalMoving, isOrbiting)
+		lastMousePos = MouseTouch:GetPosition()
 
 		local finalCFrame = nil
 
 		if isRotating then
 			finalCFrame, virtualMousePos = self:_RotatingLogic(virtualMousePos, mouseDelta)
+		elseif isVerticalMoving then
+			finalCFrame, virtualMousePos = self:_VerticalMovingLogic(virtualMousePos, mouseDelta)
+		elseif isHorizontalMoving then
+			finalCFrame, virtualMousePos = self:_HorizontalMovingLogic(virtualMousePos, mouseDelta)
 		else
 			finalCFrame, virtualMousePos = self:_MovingLogic(virtualMousePos, mouseDelta, worldRayParams)
 		end
@@ -365,10 +399,15 @@ function DraggableClient:_MainDrag()
 
 				local dragTarget = self.DragTarget:Get()
 				if dragTarget and InstanceUtils.FindFirstAncestorWithTag(dragTarget, "Surface") then
+					-- The object was successfully placed on a valid surface, weld it!
 					cakeDrag:Weld(dragTarget)
 					dragTrove:Clean()
 					self:_HandleCakeBuildPlatform(dragTarget)
 				else
+					-- The object was released but NOT welded.
+					-- Reset the drag offset back to empty CFrame.
+					self.DragOffset:Set(CFrame.new())
+
 					dragTrove:Clean()
 				end
 			end))
@@ -407,7 +446,7 @@ end
 
 function DraggableClient:_HandleCakeBuildPlatform(dragTarget)
 	if dragTarget.Name == "CakeBuildPlatform" then
-		local connectedModels = self:GetConnectedDraggableModels()
+		local connectedModels = CakeUtils.GetEntireCake(self.Instance.PrimaryPart)
 		local saveData = ModelEditorServerSafeUtils.SaveFromModels(dragTarget, connectedModels, "PhysicsDragWeld")
 
 		PlayerContext.Comm
@@ -441,35 +480,138 @@ function DraggableClient:_IsRotating()
 	end
 end
 
-function DraggableClient:_MovingLogic(virtualMousePos, mouseDelta, worldRayParams)
+function DraggableClient:_MovingLogic(virtualMousePos: Vector2, mouseDelta: Vector2, worldRayParams: RaycastParams)
 	-- Moving logic
 	virtualMousePos += mouseDelta
 
 	-- CALCULATE POSITION using the Virtual Mouse
-	local rayDistance = (Player.Character.HumanoidRootPart.Position - Workspace.CurrentCamera.CFrame.Position).Magnitude
-		+ 30
+	local camera = workspace.CurrentCamera
+	-- Assuming Player is defined globally in your module
+	local rayDistance = (Player.Character.HumanoidRootPart.Position - camera.CFrame.Position).Magnitude + 30
+
 	local virtualRay = mouseTouch:GetRay(virtualMousePos)
 	local result = mouseTouch:Raycast(worldRayParams, rayDistance, virtualMousePos)
 
-	local dragTarget
-	local targetPos
+	local dragTarget: Instance?
+	local hitPos: Vector3
+	local hitNormal: Vector3 -- Capture the normal!
 
 	if result then
-		targetPos = result.Position
+		hitPos = result.Position
 		dragTarget = result.Instance
+		hitNormal = result.Normal
 	else
-		targetPos = virtualRay.Origin + (virtualRay.Direction * rayDistance)
+		hitPos = virtualRay.Origin + (virtualRay.Direction * rayDistance)
 		dragTarget = nil
+		hitNormal = Vector3.yAxis -- Default normal to facing upward in empty space
 	end
 
 	self.DragTarget:Set(dragTarget)
 
-	-- BUG FIX: Track the perfectly grounded position every time we move successfully.
-	self._LastTargetPos = targetPos
+	-- =========================================================
+	-- NEW LOGIC: Check for the 'NormalSnapSurface' tag
+	-- =========================================================
+	local shouldRotate = false
+	if dragTarget and InstanceUtils.FindFirstAncestorWithTag(dragTarget, "NormalSnapSurface") then
+		shouldRotate = true
+	end
 
-	-- FIX JITTER: Use our smoothly tracked TargetRotation while moving so transitioning is seamless
-	local currentRotation = self._TargetRotation or self.Instance:GetPivot().Rotation
-	local finalCFrame = CFrame.new(targetPos) * currentRotation
+	-- Update the internal property
+	self.RotateWhileMoving:Set(shouldRotate)
+
+	-- If we shouldn't rotate to match the surface normal, force the normal upwards
+	-- This ensures the object stays perfectly upright on non-tagged surfaces!
+	if not shouldRotate then
+		hitNormal = Vector3.yAxis
+	end
+	-- =========================================================
+
+	-- Retrieve our complete offset CFrame
+	local currentOffset: CFrame = self.DragOffset:Get()
+
+	local right = Vector3.yAxis:Cross(hitNormal)
+	if right.Magnitude < 0.001 then
+		right = Vector3.xAxis
+	else
+		right = right.Unit
+	end
+	local back = right:Cross(hitNormal).Unit
+	local surfaceCFrame = CFrame.fromMatrix(hitPos, right, hitNormal, back)
+
+	-- Apply the rotational offset in Local Space, and the positional offset in Global Space!
+	local finalCFrame = (surfaceCFrame * currentOffset.Rotation) + currentOffset.Position
+
+	-- Update BOTH your internal target position and target CFrame
+	self._LastTargetPos = finalCFrame.Position
+	self._LastTargetCFrame = finalCFrame
+
+	return finalCFrame, virtualMousePos
+end
+
+function DraggableClient:_VerticalMovingLogic(virtualMousePos: Vector2, mouseDelta: Vector2)
+	local verticalSensitivity = 0.005
+
+	-- Up on the screen is negative Y delta, translates to positive Y movement in 3D space.
+	local deltaY = -mouseDelta.Y * verticalSensitivity
+	local deltaPos = Vector3.new(0, deltaY, 0)
+
+	local currentOffset = self.DragOffset:Get()
+	local lastTargetCFrame = self._LastTargetCFrame or self.Instance:GetPivot()
+
+	-- 1. Extract the base surface orientation by removing the GLOBAL pos offset and LOCAL rot offset
+	local surfaceCFrame = (lastTargetCFrame - currentOffset.Position) * currentOffset.Rotation:Inverse()
+
+	-- 2. Accumulate the positional change into DragOffset
+	local newPosOffset = currentOffset.Position + deltaPos
+	local newOffset = CFrame.new(newPosOffset) * currentOffset.Rotation
+	self.DragOffset:Set(newOffset)
+
+	-- 3. Construct the final CFrame mapped to the base surface normal and global position offset!
+	local finalCFrame = (surfaceCFrame * newOffset.Rotation) + newOffset.Position
+
+	self._LastTargetPos = finalCFrame.Position
+	self._LastTargetCFrame = finalCFrame
+
+	return finalCFrame, virtualMousePos
+end
+
+function DraggableClient:_HorizontalMovingLogic(virtualMousePos: Vector2, mouseDelta: Vector2)
+	local horizontalSensitivity = 0.005
+	local camCFrame = Workspace.CurrentCamera.CFrame
+
+	local camForward = camCFrame.LookVector * Vector3.new(1, 0, 1)
+	if camForward.Magnitude > 0.001 then
+		camForward = camForward.Unit
+	else
+		camForward = (camCFrame.UpVector * Vector3.new(1, 0, 1)).Unit
+	end
+
+	local camRight = camCFrame.RightVector * Vector3.new(1, 0, 1)
+	if camRight.Magnitude > 0.001 then
+		camRight = camRight.Unit
+	else
+		camRight = Vector3.new(1, 0, 0)
+	end
+
+	local deltaPos = (camRight * mouseDelta.X * horizontalSensitivity)
+		+ (camForward * -mouseDelta.Y * horizontalSensitivity)
+
+	local currentOffset = self.DragOffset:Get()
+	local lastTargetCFrame = self._LastTargetCFrame or self.Instance:GetPivot()
+
+	-- 1. Extract the base surface orientation by removing the GLOBAL pos offset and LOCAL rot offset
+	local surfaceCFrame = (lastTargetCFrame - currentOffset.Position) * currentOffset.Rotation:Inverse()
+
+	-- 2. Accumulate the positional change into DragOffset
+	local newPosOffset = currentOffset.Position + deltaPos
+	local newOffset = CFrame.new(newPosOffset) * currentOffset.Rotation
+	self.DragOffset:Set(newOffset)
+
+	-- 3. Construct the final CFrame mapped to the base surface normal and global position offset!
+	local finalCFrame = (surfaceCFrame * newOffset.Rotation) + newOffset.Position
+
+	self._LastTargetPos = finalCFrame.Position
+	self._LastTargetCFrame = finalCFrame
 
 	return finalCFrame, virtualMousePos
 end
@@ -491,17 +633,66 @@ function DraggableClient:_RotatingLogic(virtualMousePos, mouseDelta)
 	local rotationX = CFrame.fromAxisAngle(Workspace.CurrentCamera.CFrame.RightVector, pitch)
 	local deltaRotation = rotationY * rotationX
 
-	-- 2. FIX JITTER: Apply delta rotation to our tracked TARGET rotation, avoiding physics lag!
-	local currentRotation = self._TargetRotation or self.Instance:GetPivot().Rotation
-	self._TargetRotation = deltaRotation * currentRotation
+	local currentOffset = self.DragOffset:Get()
+	local lastTargetCFrame = self._LastTargetCFrame or self.Instance:GetPivot()
 
-	-- 3. BUG FIX: Use the last known grounded position instead of current pivot position!
-	local targetPos = self._LastTargetPos or self.Instance:GetPivot().Position
+	-- 2. Extract the base surface orientation by removing the GLOBAL pos offset and LOCAL rot offset!
+	local surfaceCFrame = (lastTargetCFrame - currentOffset.Position) * currentOffset.Rotation:Inverse()
 
-	-- 4. Combine the grounded target position with the newly calculated rotation
-	local finalCFrame = CFrame.new(targetPos) * self._TargetRotation
+	-- 3. Calculate and apply the new rotation directly to the DragOffset!
+	local newRotation = deltaRotation * currentOffset.Rotation
+	local newOffset = CFrame.new(currentOffset.Position) * newRotation
+
+	self.DragOffset:Set(newOffset)
+
+	-- 4. Combine the base surface CFrame with the new offset (rot local, pos global)
+	local finalCFrame = (surfaceCFrame * newOffset.Rotation) + newOffset.Position
+
+	-- Update last target states
+	self._LastTargetPos = finalCFrame.Position
+	self._LastTargetCFrame = finalCFrame
 
 	return finalCFrame, virtualMousePos
+end
+
+function DraggableClient:_GetMouseDelta(
+	lastMousePos: Vector2,
+	isRotating: boolean,
+	isVerticalMoving: boolean,
+	isHorizontalMoving: boolean,
+	isOrbiting: boolean
+)
+	local EDGE_THRESHOLD = 15 -- The distance in pixels from the edge of the window to freeze the mouse
+	-- get mousedelta
+	local currentMousePos = mouseTouch:GetPosition() -- Assuming mouseTouch is defined in your class
+	local mouseDelta: Vector2 = Vector2.new(0, 0)
+
+	-- Get the current screen resolution
+	local viewportSize = Workspace.CurrentCamera.ViewportSize
+
+	-- Check if the mouse is near any of the 4 edges of the screen
+	local isNearEdge = currentMousePos.X <= EDGE_THRESHOLD
+		or currentMousePos.X >= (viewportSize.X - EDGE_THRESHOLD)
+		or currentMousePos.Y <= EDGE_THRESHOLD
+		or currentMousePos.Y >= (viewportSize.Y - EDGE_THRESHOLD)
+
+	-- We lock the mouse for rotation, custom movements, OR if it's near the edge
+	local isCustomMoving = isRotating or isVerticalMoving or isHorizontalMoving or isNearEdge
+
+	if isCustomMoving then
+		UserInputService.MouseBehavior = Enum.MouseBehavior.LockCurrentPosition
+		mouseDelta = UserInputService:GetMouseDelta()
+	else
+		-- Only enforce the Default behavior if the user isn't trying to orbit the camera!
+		if not isOrbiting then
+			UserInputService.MouseBehavior = Enum.MouseBehavior.Default
+		end
+
+		-- Fallback to standard delta calculation when unlocked
+		mouseDelta = currentMousePos - lastMousePos
+	end
+
+	return mouseDelta
 end
 
 return DraggableClient

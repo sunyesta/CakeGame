@@ -129,7 +129,7 @@ function PhysicsDragClient:StartDrag(grabPos: Vector3?)
 				constraint:Destroy()
 			elseif constraint.Name == "PhysicsDragWeld" then
 				local otherPart = constraint.Part0 == self._Instance and constraint.Part1 or constraint.Part0
-				if otherPart and Shared.IsPartOnTop(self._Instance, otherPart) then
+				if otherPart and constraint.Part1 == self._Instance then
 					constraint:Destroy()
 				end
 			end

@@ -3,6 +3,7 @@ local ModelEditorServerSafeUtils =
 	require(ReplicatedStorage.Common.Modules.ModelEditorController.ModelEditorServerSafeUtils)
 local WeldUtils = require(ReplicatedStorage.NonWallyPackages.WeldUtils)
 local ModelUtils = require(ReplicatedStorage.NonWallyPackages.ModelUtils)
+local TableUtil = require(ReplicatedStorage.Packages.TableUtil)
 
 local CakeUtils = {}
 
@@ -30,7 +31,12 @@ function CakeUtils.CreateCake(cakeData: string, cframe): Model?
 
 	for _, model in models do
 		model.Parent = workspace
-		model:AddTag("Draggable")
+
+		model:AddTag("CakeModel")
+		if model:HasTag("CakeBase") then
+			model:AddTag("Draggable")
+		end
+
 		local weld = model:FindFirstChild(ModelEditorServerSafeUtils.WELD_NAME, true)
 		if weld then
 			weld.Name = "PhysicsDragWeld"
@@ -42,6 +48,24 @@ function CakeUtils.CreateCake(cakeData: string, cframe): Model?
 	end
 
 	primaryPart:Destroy()
+end
+
+function CakeUtils.GetEntireCake(cakeRoot)
+	local cakeModels = {}
+	local rootPart = cakeRoot
+
+	if not rootPart then
+		return {}
+	end
+
+	for _, part in rootPart:GetConnectedParts(true) do
+		local model = part:FindFirstAncestorWhichIsA("Model")
+		if model and model:HasTag("CakeModel") then
+			cakeModels[model] = true
+		end
+	end
+
+	return TableUtil.Keys(cakeModels)
 end
 
 return CakeUtils
